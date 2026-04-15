@@ -17,3 +17,6 @@ runs/
 
 # 環境變數（含 GEMINI_API_KEY、TBA_API_KEY）
 .env
+
+# Brainstorming session 暫存（superpowers visual companion）
+.superpowers/
