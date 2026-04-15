@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 資料與模型（大檔案，不入 git）
+datasets/
+models/*.onnx
+models/backup/
+runs/
+
+# IDE
+.vscode/
+.idea/
+
+# 環境變數（含 GEMINI_API_KEY、TBA_API_KEY）
+.env

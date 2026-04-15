@@ -1,0 +1,13 @@
+# 核心（多數腳本使用）
+opencv-python>=4.9.0
+numpy>=1.24.0
+Pillow>=10.0.0
+
+# label_editor.py 審核 GUI
+customtkinter>=5.2.0
+
+# auto_annotate.py Gemini Vision 自動標註
+google-genai>=1.0.0
+
+# 訓練（選配，只有執行 train_robot_model.py 時需要）
+# pip install ultralytics roboflow
