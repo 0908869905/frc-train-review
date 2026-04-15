@@ -11,11 +11,19 @@
 - Prisma 6 + Neon Postgres (serverless driver)
 - `@vercel/blob` (+ client SDK for direct upload)
 - Auth.js v5 (Google provider)
-- Tailwind CSS + shadcn/ui
+- Tailwind CSS + shadcn/ui (used as a primitive library, all default colors overridden)
 - react-konva (canvas)
 - Vitest (unit + integration)
 - Playwright (E2E)
 - pnpm package manager
+
+**Visual Style — HARD CONSTRAINT:**
+- Aesthetic target: Linear / Vercel dashboard / Basecamp / Obsidian. Dense, functional, no AI look.
+- Neutral grayscale base + ONE subdued accent (neither indigo nor purple). No gradients anywhere.
+- Tables over cards. `rounded-md` not `rounded-xl`. Minimal shadows. No hover glows.
+- Zero emoji/sparkle icons, zero "AI-powered" copy, zero decorative hero sections.
+- Monospaced font for IDs, states, counts, timestamps, shortcut hints; sans-serif for prose only.
+- Every task that produces a page or component must honor this — do NOT copy shadcn example pages verbatim, they are purple/indigo by default.
 
 **Location:** New `web/` subdirectory inside the existing `frc-train-review` repo. The Python training code and new web platform live in the same repo but share nothing at runtime.
 
@@ -202,6 +210,72 @@ pnpm add konva react-konva
 ```
 
 Accept all defaults in the shadcn init. This creates `components/ui/`, `lib/utils.ts`, and updates `tailwind.config.ts`.
+
+- [ ] **Step 3b: Override the default shadcn theme to a minimalist palette (HARD CONSTRAINT)**
+
+shadcn's defaults use an indigo/purple accent that produces the "AI-generated" look the user explicitly rejected. Replace the CSS variables in `web/app/globals.css` with a neutral palette before any UI task runs.
+
+Replace the `:root` and `.dark` blocks in `web/app/globals.css` with:
+```css
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 9%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 9%;
+    --primary: 0 0% 9%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 0 0% 96%;
+    --secondary-foreground: 0 0% 9%;
+    --muted: 0 0% 96%;
+    --muted-foreground: 0 0% 45%;
+    --accent: 0 0% 96%;
+    --accent-foreground: 0 0% 9%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 90%;
+    --input: 0 0% 90%;
+    --ring: 0 0% 9%;
+    --radius: 0.375rem;
+  }
+  .dark {
+    --background: 0 0% 7%;
+    --foreground: 0 0% 95%;
+    --card: 0 0% 9%;
+    --card-foreground: 0 0% 95%;
+    --popover: 0 0% 9%;
+    --popover-foreground: 0 0% 95%;
+    --primary: 0 0% 95%;
+    --primary-foreground: 0 0% 9%;
+    --secondary: 0 0% 14%;
+    --secondary-foreground: 0 0% 95%;
+    --muted: 0 0% 14%;
+    --muted-foreground: 0 0% 60%;
+    --accent: 0 0% 14%;
+    --accent-foreground: 0 0% 95%;
+    --destructive: 0 62% 50%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 18%;
+    --input: 0 0% 18%;
+    --ring: 0 0% 85%;
+  }
+}
+```
+
+Key changes: `--primary` is pure foreground gray (neutral), `--radius` is `0.375rem` (rounded-md not rounded-xl), no colored accent hues. Every button, badge, dialog, etc., now renders in grayscale by default.
+
+Also add a monospace utility block. Append to `globals.css`:
+```css
+@layer utilities {
+  .font-mono-ui {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-feature-settings: 'tnum' 1;
+  }
+}
+```
+Use `font-mono-ui` on IDs, states, counts, shortcuts — everywhere metadata appears.
 
 - [ ] **Step 4: Verify build**
 

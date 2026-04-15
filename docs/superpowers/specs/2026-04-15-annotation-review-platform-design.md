@@ -242,6 +242,23 @@ All state-mutating endpoints require:
 
 ---
 
+## 6.5 Visual Style — Minimalist, No AI Aesthetic
+
+The platform is an internal tool. Visual style must be dense, functional, and deliberately free of the "AI-generated" look (gradients, purple/blue washes, decorative sparkles, oversized rounded cards, generic shadcn defaults used as-is).
+
+**Reference aesthetic:** Linear, Vercel dashboard, Basecamp, Obsidian. Information-dense, muted palette, tables over cards, restrained typography.
+
+**Rules:**
+- **Palette** — neutral grayscale base, one subdued accent color (not indigo/purple). No gradients anywhere. Background solid.
+- **Layout** — high information density; tables over card lists; avoid wasting vertical space on headers or padding.
+- **Components** — shadcn is used as a library but all default colors are overridden. `rounded-md` not `rounded-xl`. Minimal or no shadows. No hover glows.
+- **Decoration** — zero sparkle icons, zero emoji in UI text, zero "AI-powered" taglines, zero hero sections.
+- **Typography** — monospaced font for IDs, states, timestamps, counts, keyboard shortcut hints. Sans-serif for prose content only.
+- **Empty states** — plain text ("No assigned images.") not illustrations.
+- **Motion** — animations only where they carry information (state transitions, loading). No decorative transitions.
+
+This is a hard constraint: any task that produces UI must honor it. Tasks M5.6, M5.7, M6.2, and all page components must explicitly avoid the defaults listed above.
+
 ## 7. Key UX Decisions
 
 - **Auto-save**: annotations are PATCHed every 2 seconds during editing. Never rely on an explicit "Save" button for safety. Submit is a distinct action that transitions state.
