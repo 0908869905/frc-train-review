@@ -1,17 +1,29 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { prisma } from '@/lib/db';
+import { signStepUpCookie, stepUpCookieName } from '@/lib/stepup';
+
+const ADMIN_ID = 'test-admin';
+let adminStepUpCookie: string;
 
 describe('POST /api/admin/users', () => {
+  beforeAll(() => {
+    process.env.AUTH_SECRET = 'test-secret-min-32-chars-please';
+    adminStepUpCookie = `${stepUpCookieName('admin')}=${signStepUpCookie({
+      userId: ADMIN_ID,
+      scope: 'admin',
+    })}`;
+  });
+
   beforeEach(async () => {
     await prisma.emailWhitelist.deleteMany();
     const { __setFakeSession } = await import('@/lib/auth-test');
     __setFakeSession({
-      user: { id: 'test-admin', email: 'admin@test', role: 'admin' },
+      user: { id: ADMIN_ID, email: 'admin@test', role: 'admin' },
     });
     await prisma.user.upsert({
       where: { email: 'admin@test' },
       update: {},
-      create: { id: 'test-admin', email: 'admin@test', role: 'admin' },
+      create: { id: ADMIN_ID, email: 'admin@test', role: 'admin' },
     });
   });
 
@@ -19,7 +31,10 @@ describe('POST /api/admin/users', () => {
     const { POST } = await import('@/app/api/admin/users/route');
     const req = new Request('http://x/api/admin/users', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        cookie: adminStepUpCookie,
+      },
       body: JSON.stringify({ email: 'alice@example.com', role: 'annotator' }),
     });
     const res = await POST(req);
@@ -38,7 +53,10 @@ describe('POST /api/admin/users', () => {
     const { POST } = await import('@/app/api/admin/users/route');
     const req = new Request('http://x/api/admin/users', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        cookie: adminStepUpCookie,
+      },
       body: JSON.stringify({ email: 'x@y.z', role: 'annotator' }),
     });
     await expect(POST(req)).rejects.toMatchObject({ status: 403 });

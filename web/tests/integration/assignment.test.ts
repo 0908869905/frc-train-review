@@ -1,10 +1,20 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { prisma } from '@/lib/db';
 import { __setFakeSession } from '@/lib/auth-test';
+import { signStepUpCookie, stepUpCookieName } from '@/lib/stepup';
 
 describe('POST /api/batches/[id]/assign', () => {
   let batchId: string;
   const IMAGE_IDS: string[] = [];
+  let adminStepUpCookie: string;
+
+  beforeAll(() => {
+    process.env.AUTH_SECRET = 'test-secret-min-32-chars-please';
+    adminStepUpCookie = `${stepUpCookieName('admin')}=${signStepUpCookie({
+      userId: 'u-admin',
+      scope: 'admin',
+    })}`;
+  });
 
   beforeEach(async () => {
     await prisma.auditLog.deleteMany();
@@ -52,7 +62,10 @@ describe('POST /api/batches/[id]/assign', () => {
     const { POST } = await import('@/app/api/batches/[id]/assign/route');
     const req = new Request('http://x', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        cookie: adminStepUpCookie,
+      },
       body: JSON.stringify({
         assignments: [
           { annotatorId: 'alice', count: 3 },
@@ -78,7 +91,10 @@ describe('POST /api/batches/[id]/assign', () => {
     const { POST } = await import('@/app/api/batches/[id]/assign/route');
     const req = new Request('http://x', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        cookie: adminStepUpCookie,
+      },
       body: JSON.stringify({
         assignments: [{ annotatorId: 'alice', count: 100 }],
       }),

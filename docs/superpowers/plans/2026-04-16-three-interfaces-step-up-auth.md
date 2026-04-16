@@ -1756,114 +1756,126 @@ git commit -m "refactor(web): redirect /admin/users → /admin/members"
 ### Task 4.3: API step-up 保護：whitelist + assign (TDD integration)
 
 **Files:**
-- Modify: `web/app/api/admin/whitelist/route.ts`（或對應 admin API 路徑，用 grep 確認）
+- Modify: `web/app/api/admin/users/route.ts`
 - Modify: `web/app/api/batches/[id]/assign/route.ts`
 - Create: `web/tests/integration/admin-api-stepup.test.ts`
+- Modify: `web/tests/integration/admin-users.test.ts`（既有測試加 step-up cookie）
+- Modify: `web/tests/integration/assignment.test.ts`（既有測試加 step-up cookie）
 
 - [ ] **Step 1: 寫失敗測試**
 
 Create `web/tests/integration/admin-api-stepup.test.ts`：
 
 ```typescript
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { prisma } from '@/lib/db';
-import { POST as whitelistPost } from '@/app/api/admin/whitelist/route';
-import { withTestSession } from '@/lib/auth-test';
+import { POST as adminUsersPost } from '@/app/api/admin/users/route';
+import { POST as assignPost } from '@/app/api/batches/[id]/assign/route';
+import { __setFakeSession } from '@/lib/auth-test';
 import { signStepUpCookie, stepUpCookieName } from '@/lib/stepup';
 
 let adminId: string;
+let batchId: string;
+let annotatorId: string;
+
 beforeAll(async () => {
   process.env.AUTH_SECRET = 'test-secret-min-32-chars-please';
+  // FK-safe cleanup (see stepup-api.test.ts precedent)
   await prisma.auditLog.deleteMany({});
+  await prisma.annotation.deleteMany({});
+  await prisma.reviewEvent.deleteMany({});
+  await prisma.image.deleteMany({});
+  await prisma.batch.deleteMany({});
+  await prisma.project.deleteMany({});
   await prisma.emailWhitelist.deleteMany({});
   await prisma.user.deleteMany({});
+
   await prisma.emailWhitelist.create({ data: { email: 'a@t.com', role: 'admin' } });
-  const u = await prisma.user.create({
+  const admin = await prisma.user.create({
     data: { email: 'a@t.com', name: 'A', role: 'admin' },
   });
-  adminId = u.id;
-});
-afterAll(async () => {
-  await prisma.auditLog.deleteMany({});
-  await prisma.user.deleteMany({});
-  await prisma.emailWhitelist.deleteMany({});
-});
-
-function withCookie(body: object, cookie?: string): Request {
-  const headers: Record<string, string> = { 'content-type': 'application/json' };
-  if (cookie) headers['cookie'] = cookie;
-  return new Request('http://localhost/api/admin/whitelist', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
+  adminId = admin.id;
+  const annotator = await prisma.user.create({
+    data: { email: 'n@t.com', name: 'N', role: 'annotator' },
   });
-}
-
-describe('whitelist POST requires admin step-up', () => {
-  it('403 without cookie', async () => {
-    const res = await withTestSession(
-      { userId: adminId, role: 'admin', email: 'a@t.com' },
-      async () => whitelistPost(withCookie({ email: 'b@t.com', role: 'annotator' })),
-    );
-    expect(res.status).toBe(403);
+  annotatorId = annotator.id;
+  const project = await prisma.project.create({
+    data: {
+      name: 'Test',
+      classes: [
+        { idx: 0, name: 'red', color: '#f00' },
+        { idx: 1, name: 'blue', color: '#00f' },
+      ],
+    },
   });
-
-  it('200 with valid cookie', async () => {
-    const c = signStepUpCookie({ userId: adminId, scope: 'admin' });
-    const res = await withTestSession(
-      { userId: adminId, role: 'admin', email: 'a@t.com' },
-      async () =>
-        whitelistPost(
-          withCookie(
-            { email: 'b@t.com', role: 'annotator' },
-            `${stepUpCookieName('admin')}=${c}`,
-          ),
-        ),
-    );
-    expect(res.status).toBe(200);
+  const batch = await prisma.batch.create({
+    data: { projectId: project.id, name: 'Batch 1', state: 'ready', uploaderId: adminId },
+  });
+  batchId = batch.id;
+  await prisma.image.create({
+    data: { batchId, blobPath: 'test.jpg', width: 640, height: 480, state: 'unassigned' },
   });
 });
+
+beforeEach(() => {
+  __setFakeSession({ user: { id: adminId, email: 'a@t.com', role: 'admin' } });
+});
+// (tests omitted — see actual file for full suite of 5 assertions)
 ```
 
 - [ ] **Step 2: 確認測試失敗**
 
 Run: `pnpm test tests/integration/admin-api-stepup.test.ts`
-Expected: FAIL — 目前 whitelist POST 不檢查 step-up。
+Expected: FAIL — 目前 admin POST 不檢查 step-up。
 
 - [ ] **Step 3: 在 API 加 `requireStepUp`**
 
-改 `web/app/api/admin/whitelist/route.ts` 的 POST：
+改 `web/app/api/admin/users/route.ts` 的 POST：
 
 ```typescript
-import { requireStepUp, StepUpRequiredError } from '@/lib/rbac';
+import { requireStepUp, StepUpRequiredError, UnauthorizedError } from '@/lib/rbac';
 
 export async function POST(req: Request) {
   const session = await getSession();
   requireRole(session?.user.role, 'whitelist.manage');
   try {
     requireStepUp(session, 'admin', req);
-  } catch (e) {
-    if (e instanceof StepUpRequiredError) {
-      return NextResponse.json({ error: 'step_up_required', scope: e.scope }, { status: 403 });
+  } catch (err) {
+    if (err instanceof StepUpRequiredError) {
+      return NextResponse.json(
+        { error: 'step_up_required', scope: err.scope },
+        { status: 401 },
+      );
     }
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    if (err instanceof UnauthorizedError) {
+      return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    }
+    throw err;
   }
   // ... existing logic
 }
 ```
 
-同樣處理 `PATCH`、`DELETE` 與 `web/app/api/batches/[id]/assign/route.ts`。
+> **Plan amendments (2026-04-16, post-P1 patterns):**
+> - Actual admin-CRUD endpoint is `/api/admin/users` (M1.6 legacy name), not `/api/admin/whitelist` as the plan originally wrote. Route file name unchanged; plan doc corrected to match.
+> - Tests use `__setFakeSession` directly + FK-safe beforeAll cleanup per `stepup-api.test.ts` precedent.
+> - `requireStepUp` throw is caught and converted to 401 response via typed `instanceof` checks on `StepUpRequiredError` / `UnauthorizedError` (both have `.status = 401` from Task 1.6 post-review patch). The `err instanceof` discrimination lets the 401 response body differentiate `step_up_required` (show password modal) from `unauthorized` (redirect to /login).
+
+同樣處理 `web/app/api/batches/[id]/assign/route.ts`。
 
 - [ ] **Step 4: 確認測試通過 + 其他測試不爆**
 
 Run: `pnpm test`
-Expected: 所有測試通過。**如果既有的 assign integration test 失敗**，把它的 fixture 加上 step-up cookie。
+Expected: 所有測試通過。**既有的 `admin-users.test.ts` 和 `assignment.test.ts`** 的 POST 請求需要加上有效的 admin step-up cookie（使用 `signStepUpCookie({ userId, scope: 'admin' })`），否則會得到 401。
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add web/app/api/admin/ web/app/api/batches/ web/tests/integration/admin-api-stepup.test.ts
-git commit -m "feat(web): admin APIs require step-up cookie"
+git add web/app/api/admin/users/route.ts web/app/api/batches/\[id\]/assign/route.ts \
+  web/tests/integration/admin-api-stepup.test.ts \
+  web/tests/integration/admin-users.test.ts \
+  web/tests/integration/assignment.test.ts
+git commit -m "feat(web): require admin step-up on whitelist + assign endpoints"
 ```
 
 ---
