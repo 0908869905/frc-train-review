@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { requireRole } from '@/lib/rbac';
 import { nextState } from '@/lib/state-machine';
+import { writeAudit } from '@/lib/audit';
 
 const Body = z.object({ comment: z.string().min(1).max(500) });
 
@@ -34,5 +35,8 @@ export async function POST(
     });
   });
 
+  await writeAudit(session!.user.id, 'image.reject', 'image', id, {
+    comment: body.comment,
+  });
   return NextResponse.json({ ok: true });
 }

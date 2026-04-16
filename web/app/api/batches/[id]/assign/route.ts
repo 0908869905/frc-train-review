@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { requireRole } from '@/lib/rbac';
+import { writeAudit } from '@/lib/audit';
 
 const Body = z.object({
   assignments: z
@@ -76,5 +77,8 @@ export async function POST(
     });
   });
 
+  await writeAudit(session!.user.id, 'batch.assign', 'batch', batchId, {
+    assignments: body.assignments,
+  });
   return NextResponse.json({ ok: true });
 }
