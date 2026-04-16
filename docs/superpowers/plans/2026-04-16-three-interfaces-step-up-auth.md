@@ -893,18 +893,24 @@ git commit -m "feat(web): rbac requireStepUp(session, scope, request)"
 - Create: `web/app/api/me/display-name/route.ts`
 - Create: `web/tests/integration/display-name-api.test.ts`
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 ```typescript
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { prisma } from '@/lib/db';
 import { PATCH } from '@/app/api/me/display-name/route';
-import { withTestSession } from '@/lib/auth-test';
+import { __setFakeSession } from '@/lib/auth-test';
 
 let userId: string;
 
 beforeAll(async () => {
+  // FK-safe cleanup: follow the pattern from stepup-api.test.ts
   await prisma.auditLog.deleteMany({});
+  await prisma.annotation.deleteMany({});
+  await prisma.reviewEvent.deleteMany({});
+  await prisma.image.deleteMany({});
+  await prisma.batch.deleteMany({});
+  await prisma.project.deleteMany({});
   await prisma.emailWhitelist.deleteMany({});
   await prisma.user.deleteMany({});
   await prisma.emailWhitelist.create({
@@ -916,60 +922,88 @@ beforeAll(async () => {
   userId = u.id;
 });
 
+beforeEach(() => {
+  __setFakeSession({ user: { id: userId, email: 'a@test.com', role: 'annotator' } });
+});
+
 afterAll(async () => {
+  __setFakeSession(null);
   await prisma.auditLog.deleteMany({});
+  await prisma.annotation.deleteMany({});
+  await prisma.reviewEvent.deleteMany({});
+  await prisma.image.deleteMany({});
+  await prisma.batch.deleteMany({});
+  await prisma.project.deleteMany({});
   await prisma.user.deleteMany({});
   await prisma.emailWhitelist.deleteMany({});
 });
 
-function req(body: object) {
+function req(body: object | null) {
   return new Request('http://localhost/api/me/display-name', {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
+    body: body === null ? undefined : JSON.stringify(body),
   });
 }
 
 describe('PATCH /api/me/display-name', () => {
+  it('401 when unauthenticated', async () => {
+    __setFakeSession(null);
+    const res = await PATCH(req({ name: '張小明' }));
+    expect(res.status).toBe(401);
+  });
+
   it('rejects empty name', async () => {
-    const res = await withTestSession(
-      { userId, role: 'annotator', email: 'a@test.com' },
-      async () => PATCH(req({ name: '' })),
-    );
+    const res = await PATCH(req({ name: '' }));
     expect(res.status).toBe(400);
   });
 
-  it('rejects overly long name', async () => {
-    const res = await withTestSession(
-      { userId, role: 'annotator', email: 'a@test.com' },
-      async () => PATCH(req({ name: 'x'.repeat(200) })),
-    );
+  it('rejects whitespace-only name', async () => {
+    const res = await PATCH(req({ name: '   ' }));
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects overly long name (>64 chars)', async () => {
+    const res = await PATCH(req({ name: 'x'.repeat(200) }));
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects malformed body', async () => {
+    const res = await PATCH(req({ wrongKey: 'x' }));
     expect(res.status).toBe(400);
   });
 
   it('updates name and stamps displayNameSetAt', async () => {
-    const res = await withTestSession(
-      { userId, role: 'annotator', email: 'a@test.com' },
-      async () => PATCH(req({ name: '張小明' })),
-    );
+    const res = await PATCH(req({ name: '張小明' }));
     expect(res.status).toBe(200);
     const u = await prisma.user.findUnique({ where: { id: userId } });
     expect(u?.name).toBe('張小明');
     expect(u?.displayNameSetAt).not.toBeNull();
+  });
+
+  it('writes audit log with action=user.display_name_set', async () => {
+    await prisma.auditLog.deleteMany({});
+    await PATCH(req({ name: 'Alice Chen' }));
     const audit = await prisma.auditLog.findFirst({
       where: { action: 'user.display_name_set', actorId: userId },
     });
     expect(audit).not.toBeNull();
   });
+
+  it('trims surrounding whitespace', async () => {
+    await PATCH(req({ name: '  李小華  ' }));
+    const u = await prisma.user.findUnique({ where: { id: userId } });
+    expect(u?.name).toBe('李小華');
+  });
 });
 ```
 
-- [ ] **Step 2: 確認失敗**
+- [x] **Step 2: 確認失敗**
 
 Run: `pnpm test tests/integration/display-name-api.test.ts`
 Expected: FAIL — route not found。
 
-- [ ] **Step 3: 實作**
+- [x] **Step 3: 實作**
 
 Create `web/app/api/me/display-name/route.ts`：
 
@@ -998,23 +1032,29 @@ export async function PATCH(req: Request) {
     where: { id: session.user.id },
     data: { name: parsed.data.name, displayNameSetAt: new Date() },
   });
-  await writeAudit({
-    actorId: session.user.id,
-    action: 'user.display_name_set',
-    targetType: 'user',
-    targetId: session.user.id,
-    payload: { name: parsed.data.name },
-  });
+  await writeAudit(
+    session.user.id,
+    'user.display_name_set',
+    'user',
+    session.user.id,
+    { name: parsed.data.name },
+  );
   return NextResponse.json({ ok: true });
 }
 ```
 
-- [ ] **Step 4: 確認通過**
+> **Plan amendments (2026-04-16, applied from Task 1.5 lessons):**
+> - `writeAudit` uses positional args per existing `lib/audit.ts` signature.
+> - Tests use `__setFakeSession` directly (the `withTestSession` helper does not exist in this repo).
+> - FK-safe `beforeAll` / `afterAll` cleanup follows the pattern established in `tests/integration/stepup-api.test.ts` (tolerates leftover rows from sibling suites).
+> - Expanded test count from 3 to 8 for branch coverage (401 unauth, whitespace-only, malformed body, trim assertion, plus original three).
+
+- [x] **Step 4: 確認通過**
 
 Run: `pnpm test tests/integration/display-name-api.test.ts`
 Expected: PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add web/app/api/me/display-name/ web/tests/integration/display-name-api.test.ts
