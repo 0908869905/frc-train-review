@@ -7,6 +7,7 @@ import {
   signStepUpCookie,
   verifyStepUpCookie,
   stepUpCookieName,
+  readStepUpCookie,
 } from '@/lib/stepup';
 import { writeAudit } from '@/lib/audit';
 
@@ -68,12 +69,7 @@ export async function GET(req: NextRequest | Request) {
   if (scope !== 'reviewer' && scope !== 'admin') {
     return NextResponse.json({ granted: false });
   }
-  const cookieHeader = req.headers.get('cookie') ?? '';
-  const match = cookieHeader
-    .split(';')
-    .map((c) => c.trim())
-    .find((c) => c.startsWith(`${stepUpCookieName(scope)}=`));
-  const value = match?.slice(match.indexOf('=') + 1);
+  const value = readStepUpCookie(req, scope);
   const granted = verifyStepUpCookie(value, {
     userId: session.user.id,
     scope,

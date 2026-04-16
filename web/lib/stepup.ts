@@ -138,3 +138,16 @@ export async function checkStepUpRateLimit(
   s.count += 1;
   return { allowed: true };
 }
+
+export function readStepUpCookie(
+  request: Request,
+  scope: StepUpScope,
+): string | undefined {
+  const header = request.headers.get('cookie') ?? '';
+  const name = stepUpCookieName(scope);
+  const match = header
+    .split(';')
+    .map((c) => c.trim())
+    .find((c) => c.startsWith(`${name}=`));
+  return match?.slice(name.length + 1);
+}

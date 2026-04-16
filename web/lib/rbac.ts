@@ -1,5 +1,4 @@
-import { verifyStepUpCookie, stepUpCookieName, type StepUpScope } from '@/lib/stepup';
-import type { Session } from 'next-auth';
+import { verifyStepUpCookie, readStepUpCookie, type StepUpScope } from '@/lib/stepup';
 
 export type Role = 'admin' | 'annotator' | 'final_reviewer';
 
@@ -43,26 +42,29 @@ export function requireRole(
   }
 }
 
+export class UnauthorizedError extends Error {
+  status = 401;
+  constructor(message = 'unauthorized') {
+    super(message);
+  }
+}
+
 export class StepUpRequiredError extends Error {
+  status = 401;
   constructor(public scope: StepUpScope) {
     super(`step-up required for scope=${scope}`);
   }
 }
 
 export function requireStepUp(
-  session: Session | null,
+  session: { user: { id: string } } | null | undefined,
   scope: StepUpScope,
   request: Request,
 ): void {
   if (!session?.user?.id) {
-    throw new Error('unauthorized');
+    throw new UnauthorizedError();
   }
-  const cookieHeader = request.headers.get('cookie') ?? '';
-  const match = cookieHeader
-    .split(';')
-    .map((c) => c.trim())
-    .find((c) => c.startsWith(`${stepUpCookieName(scope)}=`));
-  const value = match?.slice(match.indexOf('=') + 1);
+  const value = readStepUpCookie(request, scope);
   const ok = verifyStepUpCookie(value, {
     userId: session.user.id,
     scope,

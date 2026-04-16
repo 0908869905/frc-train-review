@@ -780,7 +780,7 @@ describe('requireStepUp', () => {
     const session = { user: { id: 'u1', role: 'final_reviewer' as const } };
     expect(() =>
       requireStepUp(session as any, 'reviewer', makeReq()),
-    ).toThrow(/step.up/i);
+    ).toThrow(/step-up/i);
   });
 
   it('throws when cookie for wrong scope', () => {
@@ -792,7 +792,7 @@ describe('requireStepUp', () => {
         'reviewer',
         makeReq(`${stepUpCookieName('admin')}=${c}`),
       ),
-    ).toThrow(/step.up/i);
+    ).toThrow(/step-up/i);
   });
 
   it('passes when cookie valid for scope', () => {
@@ -805,6 +805,18 @@ describe('requireStepUp', () => {
         makeReq(`${stepUpCookieName('reviewer')}=${c}`),
       ),
     ).not.toThrow();
+  });
+
+  it('throws when cookie userId does not match session', () => {
+    const c = signStepUpCookie({ userId: 'attacker', scope: 'reviewer' });
+    const session = { user: { id: 'victim', role: 'final_reviewer' as const } };
+    expect(() =>
+      requireStepUp(
+        session as any,
+        'reviewer',
+        makeReq(`${stepUpCookieName('reviewer')}=${c}`),
+      ),
+    ).toThrow(/step-up/i);
   });
 });
 ```
@@ -819,29 +831,31 @@ Expected: FAIL — `requireStepUp` not exported。
 在 `web/lib/rbac.ts` 末尾加：
 
 ```typescript
-import { verifyStepUpCookie, stepUpCookieName, type StepUpScope } from '@/lib/stepup';
-import type { Session } from 'next-auth';
+import { verifyStepUpCookie, readStepUpCookie, type StepUpScope } from '@/lib/stepup';
+
+export class UnauthorizedError extends Error {
+  status = 401;
+  constructor(message = 'unauthorized') {
+    super(message);
+  }
+}
 
 export class StepUpRequiredError extends Error {
+  status = 401;
   constructor(public scope: StepUpScope) {
     super(`step-up required for scope=${scope}`);
   }
 }
 
 export function requireStepUp(
-  session: Session | null,
+  session: { user: { id: string } } | null | undefined,
   scope: StepUpScope,
   request: Request,
 ): void {
   if (!session?.user?.id) {
-    throw new Error('unauthorized');
+    throw new UnauthorizedError();
   }
-  const cookieHeader = request.headers.get('cookie') ?? '';
-  const match = cookieHeader
-    .split(';')
-    .map((c) => c.trim())
-    .find((c) => c.startsWith(`${stepUpCookieName(scope)}=`));
-  const value = match?.slice(match.indexOf('=') + 1);
+  const value = readStepUpCookie(request, scope);
   const ok = verifyStepUpCookie(value, {
     userId: session.user.id,
     scope,
@@ -849,6 +863,13 @@ export function requireStepUp(
   if (!ok) throw new StepUpRequiredError(scope);
 }
 ```
+
+> **Plan amendments (2026-04-16, post-review):**
+> - (I1) Added `status = 401` to `StepUpRequiredError`; introduced `UnauthorizedError extends Error { status = 401 }` so the null-session branch throws a typed class instead of a plain `Error('unauthorized')`. Both errors follow the `err.status ?? 500` convention used by `requireRole` callers.
+> - (I2) Param type is now a minimal structural `{ user: { id: string } } | null | undefined` so `FakeSession` (from `lib/auth-test.ts` and what `getSession()` returns) assigns without `as any`. Dropped the `next-auth` `Session` import.
+> - (M1) Extracted `readStepUpCookie(request, scope)` into `lib/stepup.ts`; both this helper and the `/api/auth/step-up` GET handler now consume it (no duplicated cookie parsing).
+> - (M3) Test regex tightened from `/step.up/i` (wildcard `.`) to `/step-up/i`.
+> - (M4) Added userId-mismatch test (cookie for "attacker", session for "victim" → throws) to lock in the userId binding.
 
 - [ ] **Step 4: 確認測試通過**
 

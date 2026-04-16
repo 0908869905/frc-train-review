@@ -23,7 +23,7 @@ describe('requireStepUp', () => {
     const session = { user: { id: 'u1', role: 'final_reviewer' as const } };
     expect(() =>
       requireStepUp(session as any, 'reviewer', makeReq()),
-    ).toThrow(/step.up/i);
+    ).toThrow(/step-up/i);
   });
 
   it('throws when cookie for wrong scope', () => {
@@ -35,7 +35,7 @@ describe('requireStepUp', () => {
         'reviewer',
         makeReq(`${stepUpCookieName('admin')}=${c}`),
       ),
-    ).toThrow(/step.up/i);
+    ).toThrow(/step-up/i);
   });
 
   it('passes when cookie valid for scope', () => {
@@ -48,5 +48,17 @@ describe('requireStepUp', () => {
         makeReq(`${stepUpCookieName('reviewer')}=${c}`),
       ),
     ).not.toThrow();
+  });
+
+  it('throws when cookie userId does not match session', () => {
+    const c = signStepUpCookie({ userId: 'attacker', scope: 'reviewer' });
+    const session = { user: { id: 'victim', role: 'final_reviewer' as const } };
+    expect(() =>
+      requireStepUp(
+        session as any,
+        'reviewer',
+        makeReq(`${stepUpCookieName('reviewer')}=${c}`),
+      ),
+    ).toThrow(/step-up/i);
   });
 });
