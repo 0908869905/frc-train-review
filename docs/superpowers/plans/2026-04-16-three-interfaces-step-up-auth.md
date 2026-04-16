@@ -1860,6 +1860,8 @@ export async function POST(req: Request) {
 > - Actual admin-CRUD endpoint is `/api/admin/users` (M1.6 legacy name), not `/api/admin/whitelist` as the plan originally wrote. Route file name unchanged; plan doc corrected to match.
 > - Tests use `__setFakeSession` directly + FK-safe beforeAll cleanup per `stepup-api.test.ts` precedent.
 > - `requireStepUp` throw is caught and converted to 401 response via typed `instanceof` checks on `StepUpRequiredError` / `UnauthorizedError` (both have `.status = 401` from Task 1.6 post-review patch). The `err instanceof` discrimination lets the 401 response body differentiate `step_up_required` (show password modal) from `unauthorized` (redirect to /login).
+>
+> **Post-review hardening (2026-04-16):** Extracted `stepUpOr401(session, scope, request): Response | null` helper into `lib/rbac.ts` to prevent duplication when Task 5.1 (export API) lands. Both GET and POST on `/api/admin/users` now gated by admin step-up — the GET gap (whitelist list readable via curl without layout guard) closed per spec §2.4 explicit "成員表 → admin scope" requirement. Response body differentiates `step_up_required` (→ modal) from `unauthorized` (→ /login) so the client dialog has actionable state.
 
 同樣處理 `web/app/api/batches/[id]/assign/route.ts`。
 

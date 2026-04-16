@@ -2,12 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
-import {
-  requireRole,
-  requireStepUp,
-  StepUpRequiredError,
-  UnauthorizedError,
-} from '@/lib/rbac';
+import { requireRole, stepUpOr401 } from '@/lib/rbac';
 import { writeAudit } from '@/lib/audit';
 
 const Body = z.object({
@@ -27,20 +22,8 @@ export async function POST(
 ) {
   const session = await getSession();
   requireRole(session?.user.role, 'batch.assign');
-  try {
-    requireStepUp(session, 'admin', req);
-  } catch (err) {
-    if (err instanceof StepUpRequiredError) {
-      return NextResponse.json(
-        { error: 'step_up_required', scope: err.scope },
-        { status: 401 },
-      );
-    }
-    if (err instanceof UnauthorizedError) {
-      return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-    }
-    throw err;
-  }
+  const denial = stepUpOr401(session, 'admin', req);
+  if (denial) return denial;
   const { id: batchId } = await params;
   const body = Body.parse(await req.json());
 

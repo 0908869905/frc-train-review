@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { prisma } from '@/lib/db';
-import { POST as adminUsersPost } from '@/app/api/admin/users/route';
+import {
+  GET as adminUsersGet,
+  POST as adminUsersPost,
+} from '@/app/api/admin/users/route';
 import { POST as assignPost } from '@/app/api/batches/[id]/assign/route';
 import { __setFakeSession } from '@/lib/auth-test';
 import { signStepUpCookie, stepUpCookieName } from '@/lib/stepup';
@@ -88,6 +91,12 @@ function adminUsersReq(body: object, cookie?: string): Request {
   });
 }
 
+function adminUsersGetReq(cookie?: string): Request {
+  const headers: Record<string, string> = {};
+  if (cookie) headers['cookie'] = cookie;
+  return new Request('http://localhost/api/admin/users', { headers });
+}
+
 function assignReq(body: object, cookie?: string): Request {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
   if (cookie) headers['cookie'] = cookie;
@@ -126,6 +135,21 @@ describe('POST /api/admin/users (whitelist) requires admin step-up', () => {
       ),
     );
     expect(res.status).toBe(401);
+  });
+});
+
+describe('GET /api/admin/users (whitelist) requires admin step-up', () => {
+  it('401 without step-up cookie', async () => {
+    const res = await adminUsersGet(adminUsersGetReq());
+    expect(res.status).toBe(401);
+  });
+
+  it('200 with valid admin cookie', async () => {
+    const c = signStepUpCookie({ userId: adminId, scope: 'admin' });
+    const res = await adminUsersGet(
+      adminUsersGetReq(`${stepUpCookieName('admin')}=${c}`),
+    );
+    expect(res.status).toBe(200);
   });
 });
 
