@@ -8,7 +8,20 @@ import { parseYoloLabel, parseClassesTxt } from '@/lib/yolo';
 import { putImage, blobKey } from '@/lib/blob';
 
 const FinalizeBody = z.object({
-  zipUrl: z.url(),
+  zipUrl: z
+    .url()
+    .refine((u) => {
+      try {
+        const parsed = new URL(u);
+        return (
+          parsed.protocol === 'https:' &&
+          (parsed.hostname.endsWith('.public.blob.vercel-storage.com') ||
+            parsed.hostname.endsWith('.blob.vercel-storage.com'))
+        );
+      } catch {
+        return false;
+      }
+    }, 'zipUrl must be a Vercel Blob https URL'),
 });
 
 const UNKNOWN_DIM = 0;

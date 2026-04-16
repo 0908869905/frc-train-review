@@ -64,7 +64,9 @@ describe('POST /api/batches/[id]/finalize', () => {
     const req = new Request('http://x', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ zipUrl: 'https://fake/zip' }),
+      body: JSON.stringify({
+        zipUrl: 'https://test-tenant.public.blob.vercel-storage.com/zip',
+      }),
     });
     const res = await POST(req, { params: Promise.resolve({ id: batch.id }) });
     expect(res.status).toBe(200);

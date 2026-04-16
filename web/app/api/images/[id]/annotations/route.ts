@@ -27,23 +27,32 @@ export async function PATCH(
   const { id } = await params;
   const body = Body.parse(await req.json());
 
-  const image = await prisma.image.findUnique({ where: { id } });
-  if (!image) throw Object.assign(new Error('Not found'), { status: 404 });
-  if (image.assignedToId !== session.user.id) {
-    throw Object.assign(new Error('Not your image'), { status: 403 });
-  }
-  if (image.state !== 'assigned' && image.state !== 'needs_rework') {
-    throw Object.assign(new Error(`Cannot edit in state ${image.state}`), {
-      status: 409,
-    });
-  }
-  if (image.updatedAt > new Date(body.lastKnownUpdatedAt)) {
-    throw Object.assign(new Error('Stale write'), { status: 409 });
-  }
+  const lastKnown = new Date(body.lastKnownUpdatedAt);
 
-  await prisma.$transaction([
-    prisma.annotation.deleteMany({ where: { imageId: id } }),
-    prisma.annotation.createMany({
+  const refreshed = await prisma.$transaction(async (tx) => {
+    const image = await tx.image.findUnique({ where: { id } });
+    if (!image) throw Object.assign(new Error('Not found'), { status: 404 });
+    if (image.assignedToId !== session.user.id) {
+      throw Object.assign(new Error('Not your image'), { status: 403 });
+    }
+    if (image.state !== 'assigned' && image.state !== 'needs_rework') {
+      throw Object.assign(new Error(`Cannot edit in state ${image.state}`), {
+        status: 409,
+      });
+    }
+
+    // Atomic stale check: only flip updatedAt if it still matches lastKnown.
+    const now = new Date();
+    const bumped = await tx.image.updateMany({
+      where: { id, updatedAt: lastKnown },
+      data: { updatedAt: now },
+    });
+    if (bumped.count !== 1) {
+      throw Object.assign(new Error('Stale write'), { status: 409 });
+    }
+
+    await tx.annotation.deleteMany({ where: { imageId: id } });
+    await tx.annotation.createMany({
       data: body.boxes.map((b) => ({
         imageId: id,
         classIdx: b.classIdx,
@@ -54,13 +63,10 @@ export async function PATCH(
         source: 'human' as const,
         authorId: session.user.id,
       })),
-    }),
-    prisma.image.update({
-      where: { id },
-      data: { updatedAt: new Date() },
-    }),
-  ]);
+    });
 
-  const refreshed = await prisma.image.findUniqueOrThrow({ where: { id } });
+    return tx.image.findUniqueOrThrow({ where: { id } });
+  });
+
   return NextResponse.json({ updatedAt: refreshed.updatedAt });
 }
