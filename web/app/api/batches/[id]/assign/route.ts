@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
-import { requireRole } from '@/lib/rbac';
+import { requireRole, stepUpOr401 } from '@/lib/rbac';
 import { writeAudit } from '@/lib/audit';
 
 const Body = z.object({
@@ -22,6 +22,8 @@ export async function POST(
 ) {
   const session = await getSession();
   requireRole(session?.user.role, 'batch.assign');
+  const denial = stepUpOr401(session, 'admin', req);
+  if (denial) return denial;
   const { id: batchId } = await params;
   const body = Body.parse(await req.json());
 

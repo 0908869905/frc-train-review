@@ -2,15 +2,20 @@ import { NextResponse } from 'next/server';
 import { zipSync, strToU8 } from 'fflate';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
-import { requireRole } from '@/lib/rbac';
+import { stepUpOr401 } from '@/lib/rbac';
 import { serializeYoloLabel } from '@/lib/yolo';
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await getSession();
-  requireRole(session?.user.role, 'export.download');
+  const role = session?.user.role;
+  if (role !== 'admin' && role !== 'final_reviewer') {
+    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
+  }
+  const denial = stepUpOr401(session, 'reviewer', req);
+  if (denial) return denial;
   const { id } = await params;
 
   const project = await prisma.project.findUnique({ where: { id } });
@@ -44,6 +49,20 @@ export async function GET(
 
   for (let i = 0; i < images.length; i++) {
     const img = images[i];
+    try {
+      const u = new URL(img.blobPath);
+      if (
+        u.protocol !== 'https:' ||
+        !(
+          u.hostname.endsWith('.public.blob.vercel-storage.com') ||
+          u.hostname.endsWith('.blob.vercel-storage.com')
+        )
+      ) {
+        continue;
+      }
+    } catch {
+      continue;
+    }
     const resp = await fetch(img.blobPath);
     if (!resp.ok) continue;
     const bytes = new Uint8Array(await resp.arrayBuffer());

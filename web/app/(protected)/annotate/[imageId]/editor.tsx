@@ -84,15 +84,34 @@ export function Editor(p: Props) {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 's' || e.key === 'S') submit();
-      if (e.key >= '1' && e.key <= '9') {
-        const idx = parseInt(e.key, 10) - 1;
+      // Ignore if user is typing in an input/textarea
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+
+      const key = e.key.toLowerCase();
+
+      // Submit takes priority — if user bound 's' to a class, we still submit.
+      if (key === 's') {
+        submit();
+        return;
+      }
+
+      // Letter shortcut
+      const matchByShortcut = p.classes.findIndex((c) => c.shortcut === key);
+      if (matchByShortcut >= 0) {
+        setActiveIdx(matchByShortcut);
+        return;
+      }
+
+      // Numeric fallback
+      if (key >= '1' && key <= '9') {
+        const idx = parseInt(key, 10) - 1;
         if (idx < p.classes.length) setActiveIdx(idx);
       }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [submit, p.classes.length]);
+  }, [submit, p.classes]);
 
   useEffect(() => {
     const nextIds = p.queueIds.slice(currentIdx + 1, currentIdx + 6);
@@ -130,7 +149,9 @@ export function Editor(p: Props) {
             {p.projectName} / {p.batchName} / {currentIdx + 1} of{' '}
             {p.queueIds.length}
           </span>
-          <span>drag to draw · Del delete · 1-9 class · S submit</span>
+          <span>
+            drag to draw · Del delete · 1-9 / letters class · S submit
+          </span>
         </header>
         <div className="flex-1 flex items-center justify-center bg-gray-50">
           <AnnotationCanvas

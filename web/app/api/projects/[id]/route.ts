@@ -8,12 +8,23 @@ const ClassDef = z.object({
   idx: z.number().int().min(0),
   name: z.string().min(1).max(64),
   color: z.string().regex(/^#[0-9a-f]{6}$/i),
+  shortcut: z.string().regex(/^[a-z]$/).optional(),
 });
+
+const Classes = z.array(ClassDef).max(50).refine(
+  (arr) => {
+    const shortcuts = arr
+      .map((c) => c.shortcut)
+      .filter((s) => s !== undefined);
+    return new Set(shortcuts).size === shortcuts.length;
+  },
+  { message: 'shortcut letters must be unique across classes' },
+);
 
 const PatchBody = z.object({
   name: z.string().min(1).max(128).optional(),
   description: z.string().nullable().optional(),
-  classes: z.array(ClassDef).max(50).optional(),
+  classes: Classes.optional(),
 });
 
 export async function GET(

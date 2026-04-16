@@ -423,16 +423,22 @@ export async function checkStepUpRateLimit(
     const { Ratelimit } = await import('@upstash/ratelimit');
     const { Redis } = await import('@upstash/redis');
     const redis = new Redis({ url: upstashUrl, token: upstashToken });
+    const lockKey = `stepup:lock:${userId}`;
+    const lockTtl = await redis.ttl(lockKey);
+    if (typeof lockTtl === 'number' && lockTtl > 0) {
+      return { allowed: false, retryAfterSec: lockTtl };
+    }
     const ratelimit = new Ratelimit({
       redis,
       limiter: Ratelimit.fixedWindow(MAX_IN_WINDOW, '60 s'),
       prefix: 'stepup',
     });
     const res = await ratelimit.limit(userId);
-    return {
-      allowed: res.success,
-      retryAfterSec: res.success ? undefined : Math.ceil((res.reset - Date.now()) / 1000),
-    };
+    if (!res.success) {
+      await redis.set(lockKey, '1', { ex: LOCK_MS / 1000, nx: true });
+      return { allowed: false, retryAfterSec: LOCK_MS / 1000 };
+    }
+    return { allowed: true };
   }
 
   const now = Date.now();
@@ -452,6 +458,8 @@ export async function checkStepUpRateLimit(
   return { allowed: true };
 }
 ```
+
+> **Spec alignment (amended 2026-04-16):** Earlier plan draft prescribed Upstash `fixedWindow(5, '60 s')` without a separate lock key, which diverged from design spec §2.2 ("鎖 10 分鐘"). The corrected code above enforces the 10-minute lock via a second Upstash key (`stepup:lock:{userId}`, `EX 600 NX`) so production parity matches dev. Unit tests still cover only the in-memory path because mocking Upstash is out of scope; end-to-end verification happens in P7 security audit.
 
 - [ ] **Step 4: 確認測試通過**
 
@@ -482,8 +490,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import argon2 from 'argon2';
 import { prisma } from '@/lib/db';
 import { POST, GET } from '@/app/api/auth/step-up/route';
-import { withTestSession } from '@/lib/auth-test';
-import { _resetInMemoryRateLimit } from '@/lib/stepup';
+import { __setFakeSession } from '@/lib/auth-test';
+import { _resetInMemoryRateLimit, stepUpCookieName, signStepUpCookie } from '@/lib/stepup';
 
 const REVIEWER_PW = 'test-reviewer-pw';
 let userId: string;
@@ -493,69 +501,132 @@ beforeAll(async () => {
   process.env.REVIEWER_PASSWORD_HASH = await argon2.hash(REVIEWER_PW, {
     type: argon2.argon2id,
   });
+  delete process.env.UPSTASH_REDIS_REST_URL;
+  delete process.env.UPSTASH_REDIS_REST_TOKEN;
   await prisma.auditLog.deleteMany({});
+  await prisma.annotation.deleteMany({});
+  await prisma.reviewEvent.deleteMany({});
+  await prisma.image.deleteMany({});
+  await prisma.batch.deleteMany({});
+  await prisma.project.deleteMany({});
   await prisma.emailWhitelist.deleteMany({});
   await prisma.user.deleteMany({});
-  const wl = await prisma.emailWhitelist.create({
+  await prisma.emailWhitelist.create({
     data: { email: 'r@test.com', role: 'final_reviewer' },
   });
   const u = await prisma.user.create({
     data: { email: 'r@test.com', name: 'R', role: 'final_reviewer' },
   });
   userId = u.id;
+  __setFakeSession({ user: { id: userId, email: 'r@test.com', role: 'final_reviewer' } });
 });
 
-beforeEach(() => _resetInMemoryRateLimit());
+beforeEach(() => {
+  _resetInMemoryRateLimit();
+  __setFakeSession({ user: { id: userId, email: 'r@test.com', role: 'final_reviewer' } });
+});
 
 afterAll(async () => {
+  __setFakeSession(null);
   await prisma.auditLog.deleteMany({});
+  await prisma.annotation.deleteMany({});
+  await prisma.reviewEvent.deleteMany({});
+  await prisma.image.deleteMany({});
+  await prisma.batch.deleteMany({});
+  await prisma.project.deleteMany({});
   await prisma.user.deleteMany({});
   await prisma.emailWhitelist.deleteMany({});
 });
 
-function makeReq(body: object, method = 'POST'): Request {
-  return new Request('http://localhost/api/auth/step-up', {
+function makeReq(body: object | null, method = 'POST', search = ''): Request {
+  return new Request(`http://localhost/api/auth/step-up${search}`, {
     method,
     headers: { 'content-type': 'application/json' },
-    body: method === 'POST' ? JSON.stringify(body) : undefined,
+    body: method === 'POST' && body !== null ? JSON.stringify(body) : undefined,
   });
 }
 
 describe('POST /api/auth/step-up', () => {
   it('401 on wrong password', async () => {
-    const res = await withTestSession(
-      { userId, role: 'final_reviewer', email: 'r@test.com' },
-      async () => POST(makeReq({ password: 'wrong', scope: 'reviewer' })),
-    );
+    const res = await POST(makeReq({ password: 'wrong', scope: 'reviewer' }));
     expect(res.status).toBe(401);
   });
 
   it('200 on correct password + sets cookie', async () => {
-    const res = await withTestSession(
-      { userId, role: 'final_reviewer', email: 'r@test.com' },
-      async () => POST(makeReq({ password: REVIEWER_PW, scope: 'reviewer' })),
-    );
+    const res = await POST(makeReq({ password: REVIEWER_PW, scope: 'reviewer' }));
     expect(res.status).toBe(200);
     const setCookie = res.headers.get('set-cookie') ?? '';
-    expect(setCookie).toContain('stepup_reviewer=');
-    expect(setCookie).toContain('HttpOnly');
-    expect(setCookie).toContain('Secure');
+    expect(setCookie).toMatch(/stepup_reviewer=/);
+    expect(setCookie).toMatch(/HttpOnly/i);
     expect(setCookie).toMatch(/SameSite=Lax/i);
+    // Note: `Secure` is only set when NODE_ENV === 'production'. Tests run with
+    // NODE_ENV=test so the attribute is intentionally absent. Production E2E
+    // (Playwright against Vercel preview in Task 7.1) exercises the Secure path.
+  });
+
+  it('401 when unauthenticated', async () => {
+    __setFakeSession(null);
+    const res = await POST(makeReq({ password: REVIEWER_PW, scope: 'reviewer' }));
+    expect(res.status).toBe(401);
+  });
+
+  it('400 on bad body', async () => {
+    const res = await POST(makeReq({ scope: 'reviewer' })); // missing password
+    expect(res.status).toBe(400);
   });
 
   it('429 on 6th failed attempt', async () => {
-    _resetInMemoryRateLimit();
     for (let i = 0; i < 5; i++) {
-      await withTestSession(
-        { userId, role: 'final_reviewer', email: 'r@test.com' },
-        async () => POST(makeReq({ password: 'wrong', scope: 'reviewer' })),
-      );
+      await POST(makeReq({ password: 'wrong', scope: 'reviewer' }));
     }
-    const res = await withTestSession(
-      { userId, role: 'final_reviewer', email: 'r@test.com' },
-      async () => POST(makeReq({ password: 'wrong', scope: 'reviewer' })),
-    );
+    const res = await POST(makeReq({ password: 'wrong', scope: 'reviewer' }));
     expect(res.status).toBe(429);
+  });
+
+  it('writes audit log on failure and success', async () => {
+    await prisma.auditLog.deleteMany({});
+    await POST(makeReq({ password: 'wrong', scope: 'reviewer' }));
+    const failLog = await prisma.auditLog.findFirst({ where: { action: 'auth.stepup_failed' } });
+    expect(failLog).not.toBeNull();
+
+    await POST(makeReq({ password: REVIEWER_PW, scope: 'reviewer' }));
+    const grantLog = await prisma.auditLog.findFirst({ where: { action: 'auth.stepup_granted' } });
+    expect(grantLog).not.toBeNull();
+  });
+});
+
+describe('GET /api/auth/step-up', () => {
+  it('401 when unauthenticated', async () => {
+    __setFakeSession(null);
+    const req = makeReq(null, 'GET', '?scope=reviewer');
+    const res = await GET(req);
+    expect(res.status).toBe(401);
+  });
+
+  it('returns { granted: false } when no cookie', async () => {
+    const req = makeReq(null, 'GET', '?scope=reviewer');
+    const res = await GET(req);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.granted).toBe(false);
+  });
+
+  it('returns { granted: true } when cookie is valid', async () => {
+    const cookie = signStepUpCookie({ userId, scope: 'reviewer' });
+    const req = new Request('http://localhost/api/auth/step-up?scope=reviewer', {
+      method: 'GET',
+      headers: { cookie: `${stepUpCookieName('reviewer')}=${cookie}` },
+    });
+    const res = await GET(req);
+    const data = await res.json();
+    expect(data.granted).toBe(true);
+  });
+
+  it('returns { granted: false } when scope param missing', async () => {
+    const req = makeReq(null, 'GET');
+    const res = await GET(req);
+    const data = await res.json();
+    expect(data.granted).toBe(false);
   });
 });
 ```
@@ -579,7 +650,6 @@ import {
   signStepUpCookie,
   verifyStepUpCookie,
   stepUpCookieName,
-  type StepUpScope,
 } from '@/lib/stepup';
 import { writeAudit } from '@/lib/audit';
 
@@ -609,33 +679,21 @@ export async function POST(req: NextRequest | Request) {
     );
   }
 
-  const ok = await verifyStepUpPassword(scope as StepUpScope, password);
+  const ok = await verifyStepUpPassword(scope, password);
   if (!ok) {
-    await writeAudit({
-      actorId: session.user.id,
-      action: 'auth.stepup_failed',
-      targetType: 'stepup',
-      targetId: scope,
-      payload: {},
-    });
+    await writeAudit(session.user.id, 'auth.stepup_failed', 'stepup', scope, {});
     return NextResponse.json({ error: 'invalid_password' }, { status: 401 });
   }
 
   const cookie = signStepUpCookie({
     userId: session.user.id,
-    scope: scope as StepUpScope,
+    scope,
   });
-  await writeAudit({
-    actorId: session.user.id,
-    action: 'auth.stepup_granted',
-    targetType: 'stepup',
-    targetId: scope,
-    payload: {},
-  });
+  await writeAudit(session.user.id, 'auth.stepup_granted', 'stepup', scope, {});
   const res = NextResponse.json({ granted: true });
-  res.cookies.set(stepUpCookieName(scope as StepUpScope), cookie, {
+  res.cookies.set(stepUpCookieName(scope), cookie, {
     httpOnly: true,
-    secure: true,
+    secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     path: '/',
     maxAge: 3600,
@@ -646,7 +704,7 @@ export async function POST(req: NextRequest | Request) {
 export async function GET(req: NextRequest | Request) {
   const session = await getSession();
   if (!session?.user?.id) {
-    return NextResponse.json({ granted: false });
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   const url = new URL(req.url);
   const scope = url.searchParams.get('scope');
@@ -667,6 +725,11 @@ export async function GET(req: NextRequest | Request) {
 }
 ```
 
+> **Plan amendments (2026-04-16):**
+> - `writeAudit` uses positional args per existing `lib/audit.ts` signature (object-arg form in earlier draft would not compile).
+> - Tests use `__setFakeSession` directly per repo convention (`withTestSession` helper does not exist and creating it would diverge from existing integration tests in `tests/integration/`). Added 4 branch-coverage tests (401 unauth, 400 bad body, audit log check, GET happy/sad) to match the rigor applied to `lib/stepup.ts` tests.
+> - Follow-up amendments (post-review): (I1) GET now returns 401 on unauth instead of `{granted:false}` — symmetric with POST and fail-fast. (I2) Cookie `secure` flag is `NODE_ENV === 'production'` so local HTTP dev + Playwright localhost can exercise the guard; production stays strict. (M1) Removed redundant `as StepUpScope` casts now that zod enum narrowing is trusted. (M7) Set-Cookie assertions unified on case-insensitive regex.
+
 - [ ] **Step 4: 確認測試通過**
 
 Run: `pnpm test tests/integration/stepup-api.test.ts`
@@ -675,7 +738,7 @@ Expected: PASS。
 - [ ] **Step 5: Commit**
 
 ```bash
-git add web/app/api/auth/step-up/ web/tests/integration/stepup-api.test.ts
+git add web/app/api/auth/step-up/ web/tests/integration/stepup-api.test.ts docs/superpowers/plans/2026-04-16-three-interfaces-step-up-auth.md
 git commit -m "feat(web): /api/auth/step-up POST+GET with audit + rate limit"
 ```
 
@@ -717,7 +780,7 @@ describe('requireStepUp', () => {
     const session = { user: { id: 'u1', role: 'final_reviewer' as const } };
     expect(() =>
       requireStepUp(session as any, 'reviewer', makeReq()),
-    ).toThrow(/step.up/i);
+    ).toThrow(/step-up/i);
   });
 
   it('throws when cookie for wrong scope', () => {
@@ -729,7 +792,7 @@ describe('requireStepUp', () => {
         'reviewer',
         makeReq(`${stepUpCookieName('admin')}=${c}`),
       ),
-    ).toThrow(/step.up/i);
+    ).toThrow(/step-up/i);
   });
 
   it('passes when cookie valid for scope', () => {
@@ -742,6 +805,18 @@ describe('requireStepUp', () => {
         makeReq(`${stepUpCookieName('reviewer')}=${c}`),
       ),
     ).not.toThrow();
+  });
+
+  it('throws when cookie userId does not match session', () => {
+    const c = signStepUpCookie({ userId: 'attacker', scope: 'reviewer' });
+    const session = { user: { id: 'victim', role: 'final_reviewer' as const } };
+    expect(() =>
+      requireStepUp(
+        session as any,
+        'reviewer',
+        makeReq(`${stepUpCookieName('reviewer')}=${c}`),
+      ),
+    ).toThrow(/step-up/i);
   });
 });
 ```
@@ -756,29 +831,31 @@ Expected: FAIL — `requireStepUp` not exported。
 在 `web/lib/rbac.ts` 末尾加：
 
 ```typescript
-import { verifyStepUpCookie, stepUpCookieName, type StepUpScope } from '@/lib/stepup';
-import type { Session } from 'next-auth';
+import { verifyStepUpCookie, readStepUpCookie, type StepUpScope } from '@/lib/stepup';
+
+export class UnauthorizedError extends Error {
+  status = 401;
+  constructor(message = 'unauthorized') {
+    super(message);
+  }
+}
 
 export class StepUpRequiredError extends Error {
+  status = 401;
   constructor(public scope: StepUpScope) {
     super(`step-up required for scope=${scope}`);
   }
 }
 
 export function requireStepUp(
-  session: Session | null,
+  session: { user: { id: string } } | null | undefined,
   scope: StepUpScope,
   request: Request,
 ): void {
   if (!session?.user?.id) {
-    throw new Error('unauthorized');
+    throw new UnauthorizedError();
   }
-  const cookieHeader = request.headers.get('cookie') ?? '';
-  const match = cookieHeader
-    .split(';')
-    .map((c) => c.trim())
-    .find((c) => c.startsWith(`${stepUpCookieName(scope)}=`));
-  const value = match?.slice(match.indexOf('=') + 1);
+  const value = readStepUpCookie(request, scope);
   const ok = verifyStepUpCookie(value, {
     userId: session.user.id,
     scope,
@@ -786,6 +863,13 @@ export function requireStepUp(
   if (!ok) throw new StepUpRequiredError(scope);
 }
 ```
+
+> **Plan amendments (2026-04-16, post-review):**
+> - (I1) Added `status = 401` to `StepUpRequiredError`; introduced `UnauthorizedError extends Error { status = 401 }` so the null-session branch throws a typed class instead of a plain `Error('unauthorized')`. Both errors follow the `err.status ?? 500` convention used by `requireRole` callers.
+> - (I2) Param type is now a minimal structural `{ user: { id: string } } | null | undefined` so `FakeSession` (from `lib/auth-test.ts` and what `getSession()` returns) assigns without `as any`. Dropped the `next-auth` `Session` import.
+> - (M1) Extracted `readStepUpCookie(request, scope)` into `lib/stepup.ts`; both this helper and the `/api/auth/step-up` GET handler now consume it (no duplicated cookie parsing).
+> - (M3) Test regex tightened from `/step.up/i` (wildcard `.`) to `/step-up/i`.
+> - (M4) Added userId-mismatch test (cookie for "attacker", session for "victim" → throws) to lock in the userId binding.
 
 - [ ] **Step 4: 確認測試通過**
 
@@ -809,18 +893,24 @@ git commit -m "feat(web): rbac requireStepUp(session, scope, request)"
 - Create: `web/app/api/me/display-name/route.ts`
 - Create: `web/tests/integration/display-name-api.test.ts`
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 ```typescript
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { prisma } from '@/lib/db';
 import { PATCH } from '@/app/api/me/display-name/route';
-import { withTestSession } from '@/lib/auth-test';
+import { __setFakeSession } from '@/lib/auth-test';
 
 let userId: string;
 
 beforeAll(async () => {
+  // FK-safe cleanup: follow the pattern from stepup-api.test.ts
   await prisma.auditLog.deleteMany({});
+  await prisma.annotation.deleteMany({});
+  await prisma.reviewEvent.deleteMany({});
+  await prisma.image.deleteMany({});
+  await prisma.batch.deleteMany({});
+  await prisma.project.deleteMany({});
   await prisma.emailWhitelist.deleteMany({});
   await prisma.user.deleteMany({});
   await prisma.emailWhitelist.create({
@@ -832,60 +922,88 @@ beforeAll(async () => {
   userId = u.id;
 });
 
+beforeEach(() => {
+  __setFakeSession({ user: { id: userId, email: 'a@test.com', role: 'annotator' } });
+});
+
 afterAll(async () => {
+  __setFakeSession(null);
   await prisma.auditLog.deleteMany({});
+  await prisma.annotation.deleteMany({});
+  await prisma.reviewEvent.deleteMany({});
+  await prisma.image.deleteMany({});
+  await prisma.batch.deleteMany({});
+  await prisma.project.deleteMany({});
   await prisma.user.deleteMany({});
   await prisma.emailWhitelist.deleteMany({});
 });
 
-function req(body: object) {
+function req(body: object | null) {
   return new Request('http://localhost/api/me/display-name', {
     method: 'PATCH',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
+    body: body === null ? undefined : JSON.stringify(body),
   });
 }
 
 describe('PATCH /api/me/display-name', () => {
+  it('401 when unauthenticated', async () => {
+    __setFakeSession(null);
+    const res = await PATCH(req({ name: '張小明' }));
+    expect(res.status).toBe(401);
+  });
+
   it('rejects empty name', async () => {
-    const res = await withTestSession(
-      { userId, role: 'annotator', email: 'a@test.com' },
-      async () => PATCH(req({ name: '' })),
-    );
+    const res = await PATCH(req({ name: '' }));
     expect(res.status).toBe(400);
   });
 
-  it('rejects overly long name', async () => {
-    const res = await withTestSession(
-      { userId, role: 'annotator', email: 'a@test.com' },
-      async () => PATCH(req({ name: 'x'.repeat(200) })),
-    );
+  it('rejects whitespace-only name', async () => {
+    const res = await PATCH(req({ name: '   ' }));
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects overly long name (>64 chars)', async () => {
+    const res = await PATCH(req({ name: 'x'.repeat(200) }));
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects malformed body', async () => {
+    const res = await PATCH(req({ wrongKey: 'x' }));
     expect(res.status).toBe(400);
   });
 
   it('updates name and stamps displayNameSetAt', async () => {
-    const res = await withTestSession(
-      { userId, role: 'annotator', email: 'a@test.com' },
-      async () => PATCH(req({ name: '張小明' })),
-    );
+    const res = await PATCH(req({ name: '張小明' }));
     expect(res.status).toBe(200);
     const u = await prisma.user.findUnique({ where: { id: userId } });
     expect(u?.name).toBe('張小明');
     expect(u?.displayNameSetAt).not.toBeNull();
+  });
+
+  it('writes audit log with action=user.display_name_set', async () => {
+    await prisma.auditLog.deleteMany({});
+    await PATCH(req({ name: 'Alice Chen' }));
     const audit = await prisma.auditLog.findFirst({
       where: { action: 'user.display_name_set', actorId: userId },
     });
     expect(audit).not.toBeNull();
   });
+
+  it('trims surrounding whitespace', async () => {
+    await PATCH(req({ name: '  李小華  ' }));
+    const u = await prisma.user.findUnique({ where: { id: userId } });
+    expect(u?.name).toBe('李小華');
+  });
 });
 ```
 
-- [ ] **Step 2: 確認失敗**
+- [x] **Step 2: 確認失敗**
 
 Run: `pnpm test tests/integration/display-name-api.test.ts`
 Expected: FAIL — route not found。
 
-- [ ] **Step 3: 實作**
+- [x] **Step 3: 實作**
 
 Create `web/app/api/me/display-name/route.ts`：
 
@@ -914,23 +1032,29 @@ export async function PATCH(req: Request) {
     where: { id: session.user.id },
     data: { name: parsed.data.name, displayNameSetAt: new Date() },
   });
-  await writeAudit({
-    actorId: session.user.id,
-    action: 'user.display_name_set',
-    targetType: 'user',
-    targetId: session.user.id,
-    payload: { name: parsed.data.name },
-  });
+  await writeAudit(
+    session.user.id,
+    'user.display_name_set',
+    'user',
+    session.user.id,
+    { name: parsed.data.name },
+  );
   return NextResponse.json({ ok: true });
 }
 ```
 
-- [ ] **Step 4: 確認通過**
+> **Plan amendments (2026-04-16, applied from Task 1.5 lessons):**
+> - `writeAudit` uses positional args per existing `lib/audit.ts` signature.
+> - Tests use `__setFakeSession` directly (the `withTestSession` helper does not exist in this repo).
+> - FK-safe `beforeAll` / `afterAll` cleanup follows the pattern established in `tests/integration/stepup-api.test.ts` (tolerates leftover rows from sibling suites).
+> - Expanded test count from 3 to 8 for branch coverage (401 unauth, whitespace-only, malformed body, trim assertion, plus original three).
+
+- [x] **Step 4: 確認通過**
 
 Run: `pnpm test tests/integration/display-name-api.test.ts`
 Expected: PASS。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add web/app/api/me/display-name/ web/tests/integration/display-name-api.test.ts
@@ -1055,39 +1179,59 @@ git commit -m "feat(web): onboarding name form (functional placeholder pre-visua
 
 ### Task 2.3: `proxy.ts` — 未填姓名者自動重導 onboarding
 
+> **Combined with Task 2.4 (single commit):** Implementing 2.3 without 2.4's JWT claim would make the proxy check fail (no `displayNameSetAt` on session). Implementing 2.4 without 2.3 would silently carry the claim with no enforcement. They land together.
+>
+> **Also includes name-form `useSession().update()` fix** (in `web/app/(protected)/onboarding/name/name-form.tsx`): without triggering a JWT refresh after PATCH success, the proxy would redirect back to `/onboarding/name` because the cached JWT still shows `displayNameSetAt: null`. This is plan drift from Task 2.2 but necessary for the end-to-end flow.
+
 > ⚠️ **依賴**：本 task 邏輯需要 session 已有 `displayNameSetAt` 欄位，該欄位由 Task 2.4 的 JWT claim 加入。**建議執行順序：先 2.4 再 2.3**（或兩 task 同一個 session 一起做、合併成一個 commit）。
 
 **Files:**
 - Modify: `web/proxy.ts`
 
-- [ ] **Step 1: 在 proxy.ts 加判斷**
+- [x] **Step 1: 在 proxy.ts 加判斷**
 
-查 `web/proxy.ts`，找 auth check 之後的區塊。加上：
+Final `web/proxy.ts` content (API routes excluded from the onboarding gate so the form's own `PATCH /api/me/display-name` can complete):
 
 ```typescript
-// 已登入但未完成 onboarding → 導去 /onboarding/name
-if (
-  session?.user?.id &&
-  !['/onboarding/name', '/api'].some((p) => req.nextUrl.pathname.startsWith(p))
-) {
-  // 需查 DB：displayNameSetAt 是否為 null
-  // 由於 middleware 跑在 edge，不能用 Prisma → 改走 JWT claim
-  if (session.user.displayNameSetAt == null) {
+import { auth } from '@/lib/auth';
+import { NextResponse } from 'next/server';
+
+export default auth((req) => {
+  const { pathname } = req.nextUrl;
+  const publicPaths = ['/login', '/api/auth'];
+  if (publicPaths.some((p) => pathname.startsWith(p))) return;
+
+  if (!req.auth) {
+    const loginUrl = new URL('/login', req.url);
+    return NextResponse.redirect(loginUrl);
+  }
+
+  // Onboarding gate: user signed in but hasn't set a display name yet.
+  // Edge runtime — can't use Prisma, so we rely on the displayNameSetAt
+  // claim baked into the JWT by the jwt() callback in lib/auth.ts.
+  const onOnboardingPage = pathname.startsWith('/onboarding/name');
+  const onApiRoute = pathname.startsWith('/api');
+  if (
+    !onOnboardingPage &&
+    !onApiRoute &&
+    req.auth.user.displayNameSetAt == null
+  ) {
     return NextResponse.redirect(new URL('/onboarding/name', req.url));
   }
-}
+});
+
+export const config = {
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+};
 ```
 
 注意：middleware 在 edge runtime，**不能直接 import prisma**。需要在 `auth.ts` 的 jwt callback 把 `displayNameSetAt` 讀進 token（見 Task 2.4）。
 
-- [ ] **Step 2: 確認 proxy.ts 邏輯（暫先 skip test，等 2.4 整併）**
+- [x] **Step 2: 確認 proxy.ts 邏輯（與 2.4 整併驗證）**
 
-- [ ] **Step 3: Commit（本 task 僅 scaffolding，真正生效要 2.4 完成）**
+- [x] **Step 3: Commit（與 Task 2.4 合併成一個 commit）**
 
-```bash
-git add web/proxy.ts
-git commit -m "chore(web): proxy onboarding redirect scaffolding (needs JWT claim)"
-```
+See Task 2.4 Step 5 for the combined commit.
 
 ---
 
@@ -1097,20 +1241,17 @@ git commit -m "chore(web): proxy onboarding redirect scaffolding (needs JWT clai
 - Modify: `web/lib/auth.ts`
 - Modify: `web/types/next-auth.d.ts`（若無則建立）
 
-- [ ] **Step 1: 擴充 type**
+- [x] **Step 1: 擴充 type**
 
-Check if `web/types/next-auth.d.ts` exists. If not, create:
+`web/types/next-auth.d.ts` already existed (added at M1 with `Role` augmentation). Extend the `Session.user` and `JWT` interfaces with `displayNameSetAt`:
 
 ```typescript
-import 'next-auth';
-import 'next-auth/jwt';
+import { DefaultSession } from 'next-auth';
 
 declare module 'next-auth' {
   interface Session {
-    user: {
+    user: DefaultSession['user'] & {
       id: string;
-      email?: string | null;
-      name?: string | null;
       role: 'admin' | 'annotator' | 'final_reviewer';
       displayNameSetAt: string | null;
     };
@@ -1126,7 +1267,9 @@ declare module 'next-auth/jwt' {
 }
 ```
 
-- [ ] **Step 2: 修 auth.ts jwt + session callback**
+> **Plan amendment (2026-04-16):** `types/next-auth.d.ts` already existed with the earlier `Role` augmentation from M1 — amendment ADDS `displayNameSetAt: string | null` to both the `Session.user` shape and the JWT interface, rather than creating the file from scratch as the plan originally described.
+
+- [x] **Step 2: 修 auth.ts jwt + session callback**
 
 Edit `web/lib/auth.ts`：
 
@@ -1159,16 +1302,25 @@ async session({ session, token }) {
 Run: `pnpm dev`
 清資料庫 `User.displayNameSetAt`（Prisma studio 或 SQL），登入 → 應自動被導到 `/onboarding/name`。填名後應導回 `/`。
 
-- [ ] **Step 4: TypeScript build 驗證**
+> **Deferred to Task 7.2 Playwright E2E** — cannot be exercised from a subagent without a browser. TS compile + existing unit/integration tests are the automated verification for this commit.
+
+- [x] **Step 4: TypeScript build 驗證**
 
 Run: `pnpm build`
-Expected: no type errors。
+Expected: no type errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Combined commit (2.3 + 2.4 + name-form fix)**
+
+Also bundles:
+- `web/app/(protected)/onboarding/name/name-form.tsx` — `useSession().update()` after PATCH success to trigger a JWT refresh before navigating away (prevents proxy redirect loop).
+- `web/app/providers.tsx` (new) + `web/app/layout.tsx` — wraps the app in `<SessionProvider>` so `useSession()` is available in client components.
 
 ```bash
-git add web/lib/auth.ts web/types/next-auth.d.ts
-git commit -m "feat(web): jwt claim displayNameSetAt drives onboarding redirect"
+git add web/types/next-auth.d.ts web/lib/auth.ts web/proxy.ts \
+  "web/app/(protected)/onboarding/name/name-form.tsx" \
+  web/app/providers.tsx web/app/layout.tsx \
+  docs/superpowers/plans/2026-04-16-three-interfaces-step-up-auth.md
+git commit -m "feat(web): onboarding gate — JWT claim + proxy redirect + client session refresh"
 ```
 
 ---
@@ -1604,114 +1756,128 @@ git commit -m "refactor(web): redirect /admin/users → /admin/members"
 ### Task 4.3: API step-up 保護：whitelist + assign (TDD integration)
 
 **Files:**
-- Modify: `web/app/api/admin/whitelist/route.ts`（或對應 admin API 路徑，用 grep 確認）
+- Modify: `web/app/api/admin/users/route.ts`
 - Modify: `web/app/api/batches/[id]/assign/route.ts`
 - Create: `web/tests/integration/admin-api-stepup.test.ts`
+- Modify: `web/tests/integration/admin-users.test.ts`（既有測試加 step-up cookie）
+- Modify: `web/tests/integration/assignment.test.ts`（既有測試加 step-up cookie）
 
 - [ ] **Step 1: 寫失敗測試**
 
 Create `web/tests/integration/admin-api-stepup.test.ts`：
 
 ```typescript
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { prisma } from '@/lib/db';
-import { POST as whitelistPost } from '@/app/api/admin/whitelist/route';
-import { withTestSession } from '@/lib/auth-test';
+import { POST as adminUsersPost } from '@/app/api/admin/users/route';
+import { POST as assignPost } from '@/app/api/batches/[id]/assign/route';
+import { __setFakeSession } from '@/lib/auth-test';
 import { signStepUpCookie, stepUpCookieName } from '@/lib/stepup';
 
 let adminId: string;
+let batchId: string;
+let annotatorId: string;
+
 beforeAll(async () => {
   process.env.AUTH_SECRET = 'test-secret-min-32-chars-please';
+  // FK-safe cleanup (see stepup-api.test.ts precedent)
   await prisma.auditLog.deleteMany({});
+  await prisma.annotation.deleteMany({});
+  await prisma.reviewEvent.deleteMany({});
+  await prisma.image.deleteMany({});
+  await prisma.batch.deleteMany({});
+  await prisma.project.deleteMany({});
   await prisma.emailWhitelist.deleteMany({});
   await prisma.user.deleteMany({});
+
   await prisma.emailWhitelist.create({ data: { email: 'a@t.com', role: 'admin' } });
-  const u = await prisma.user.create({
+  const admin = await prisma.user.create({
     data: { email: 'a@t.com', name: 'A', role: 'admin' },
   });
-  adminId = u.id;
-});
-afterAll(async () => {
-  await prisma.auditLog.deleteMany({});
-  await prisma.user.deleteMany({});
-  await prisma.emailWhitelist.deleteMany({});
-});
-
-function withCookie(body: object, cookie?: string): Request {
-  const headers: Record<string, string> = { 'content-type': 'application/json' };
-  if (cookie) headers['cookie'] = cookie;
-  return new Request('http://localhost/api/admin/whitelist', {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
+  adminId = admin.id;
+  const annotator = await prisma.user.create({
+    data: { email: 'n@t.com', name: 'N', role: 'annotator' },
   });
-}
-
-describe('whitelist POST requires admin step-up', () => {
-  it('403 without cookie', async () => {
-    const res = await withTestSession(
-      { userId: adminId, role: 'admin', email: 'a@t.com' },
-      async () => whitelistPost(withCookie({ email: 'b@t.com', role: 'annotator' })),
-    );
-    expect(res.status).toBe(403);
+  annotatorId = annotator.id;
+  const project = await prisma.project.create({
+    data: {
+      name: 'Test',
+      classes: [
+        { idx: 0, name: 'red', color: '#f00' },
+        { idx: 1, name: 'blue', color: '#00f' },
+      ],
+    },
   });
-
-  it('200 with valid cookie', async () => {
-    const c = signStepUpCookie({ userId: adminId, scope: 'admin' });
-    const res = await withTestSession(
-      { userId: adminId, role: 'admin', email: 'a@t.com' },
-      async () =>
-        whitelistPost(
-          withCookie(
-            { email: 'b@t.com', role: 'annotator' },
-            `${stepUpCookieName('admin')}=${c}`,
-          ),
-        ),
-    );
-    expect(res.status).toBe(200);
+  const batch = await prisma.batch.create({
+    data: { projectId: project.id, name: 'Batch 1', state: 'ready', uploaderId: adminId },
+  });
+  batchId = batch.id;
+  await prisma.image.create({
+    data: { batchId, blobPath: 'test.jpg', width: 640, height: 480, state: 'unassigned' },
   });
 });
+
+beforeEach(() => {
+  __setFakeSession({ user: { id: adminId, email: 'a@t.com', role: 'admin' } });
+});
+// (tests omitted — see actual file for full suite of 5 assertions)
 ```
 
 - [ ] **Step 2: 確認測試失敗**
 
 Run: `pnpm test tests/integration/admin-api-stepup.test.ts`
-Expected: FAIL — 目前 whitelist POST 不檢查 step-up。
+Expected: FAIL — 目前 admin POST 不檢查 step-up。
 
 - [ ] **Step 3: 在 API 加 `requireStepUp`**
 
-改 `web/app/api/admin/whitelist/route.ts` 的 POST：
+改 `web/app/api/admin/users/route.ts` 的 POST：
 
 ```typescript
-import { requireStepUp, StepUpRequiredError } from '@/lib/rbac';
+import { requireStepUp, StepUpRequiredError, UnauthorizedError } from '@/lib/rbac';
 
 export async function POST(req: Request) {
   const session = await getSession();
   requireRole(session?.user.role, 'whitelist.manage');
   try {
     requireStepUp(session, 'admin', req);
-  } catch (e) {
-    if (e instanceof StepUpRequiredError) {
-      return NextResponse.json({ error: 'step_up_required', scope: e.scope }, { status: 403 });
+  } catch (err) {
+    if (err instanceof StepUpRequiredError) {
+      return NextResponse.json(
+        { error: 'step_up_required', scope: err.scope },
+        { status: 401 },
+      );
     }
-    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    if (err instanceof UnauthorizedError) {
+      return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
+    }
+    throw err;
   }
   // ... existing logic
 }
 ```
 
-同樣處理 `PATCH`、`DELETE` 與 `web/app/api/batches/[id]/assign/route.ts`。
+> **Plan amendments (2026-04-16, post-P1 patterns):**
+> - Actual admin-CRUD endpoint is `/api/admin/users` (M1.6 legacy name), not `/api/admin/whitelist` as the plan originally wrote. Route file name unchanged; plan doc corrected to match.
+> - Tests use `__setFakeSession` directly + FK-safe beforeAll cleanup per `stepup-api.test.ts` precedent.
+> - `requireStepUp` throw is caught and converted to 401 response via typed `instanceof` checks on `StepUpRequiredError` / `UnauthorizedError` (both have `.status = 401` from Task 1.6 post-review patch). The `err instanceof` discrimination lets the 401 response body differentiate `step_up_required` (show password modal) from `unauthorized` (redirect to /login).
+>
+> **Post-review hardening (2026-04-16):** Extracted `stepUpOr401(session, scope, request): Response | null` helper into `lib/rbac.ts` to prevent duplication when Task 5.1 (export API) lands. Both GET and POST on `/api/admin/users` now gated by admin step-up — the GET gap (whitelist list readable via curl without layout guard) closed per spec §2.4 explicit "成員表 → admin scope" requirement. Response body differentiates `step_up_required` (→ modal) from `unauthorized` (→ /login) so the client dialog has actionable state.
+
+同樣處理 `web/app/api/batches/[id]/assign/route.ts`。
 
 - [ ] **Step 4: 確認測試通過 + 其他測試不爆**
 
 Run: `pnpm test`
-Expected: 所有測試通過。**如果既有的 assign integration test 失敗**，把它的 fixture 加上 step-up cookie。
+Expected: 所有測試通過。**既有的 `admin-users.test.ts` 和 `assignment.test.ts`** 的 POST 請求需要加上有效的 admin step-up cookie（使用 `signStepUpCookie({ userId, scope: 'admin' })`），否則會得到 401。
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add web/app/api/admin/ web/app/api/batches/ web/tests/integration/admin-api-stepup.test.ts
-git commit -m "feat(web): admin APIs require step-up cookie"
+git add web/app/api/admin/users/route.ts web/app/api/batches/\[id\]/assign/route.ts \
+  web/tests/integration/admin-api-stepup.test.ts \
+  web/tests/integration/admin-users.test.ts \
+  web/tests/integration/assignment.test.ts
+git commit -m "feat(web): require admin step-up on whitelist + assign endpoints"
 ```
 
 ---
@@ -1721,26 +1887,31 @@ git commit -m "feat(web): admin APIs require step-up cookie"
 ### Task 5.1: Export API 放寬 role + requireStepUp(reviewer) (TDD integration)
 
 **Files:**
-- Modify: `web/app/api/batches/[id]/export/route.ts`
+- Modify: `web/app/api/projects/[id]/export/route.ts`
 - Create: `web/tests/integration/export-stepup.test.ts`
+- Modify: `web/tests/integration/export.test.ts` (inject reviewer cookie into existing test)
 
-- [ ] **Step 1: 寫失敗測試**
+- [x] **Step 1: 寫失敗測試**
 
 Create `web/tests/integration/export-stepup.test.ts`：
 
 ```typescript
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { prisma } from '@/lib/db';
-import { GET } from '@/app/api/batches/[id]/export/route';
-import { withTestSession } from '@/lib/auth-test';
+import { GET } from '@/app/api/projects/[id]/export/route';
+import { __setFakeSession } from '@/lib/auth-test';
 import { signStepUpCookie, stepUpCookieName } from '@/lib/stepup';
 
+const fakeJpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
+global.fetch = vi.fn(async () => new Response(fakeJpeg)) as typeof fetch;
+
 let reviewerId: string;
-let batchId: string;
+let annotatorId: string;
 let projectId: string;
 
 beforeAll(async () => {
   process.env.AUTH_SECRET = 'test-secret-min-32-chars-please';
+  // FK-safe cleanup
   await prisma.auditLog.deleteMany({});
   await prisma.reviewEvent.deleteMany({});
   await prisma.annotation.deleteMany({});
@@ -1749,11 +1920,19 @@ beforeAll(async () => {
   await prisma.project.deleteMany({});
   await prisma.emailWhitelist.deleteMany({});
   await prisma.user.deleteMany({});
+
   await prisma.emailWhitelist.create({ data: { email: 'r@t.com', role: 'final_reviewer' } });
-  const u = await prisma.user.create({
+  const r = await prisma.user.create({
     data: { email: 'r@t.com', name: 'R', role: 'final_reviewer' },
   });
-  reviewerId = u.id;
+  reviewerId = r.id;
+
+  await prisma.emailWhitelist.create({ data: { email: 'n@t.com', role: 'annotator' } });
+  const n = await prisma.user.create({
+    data: { email: 'n@t.com', name: 'N', role: 'annotator' },
+  });
+  annotatorId = n.id;
+
   const p = await prisma.project.create({
     data: { name: 'P', classes: [{ idx: 0, name: 'c', color: '#000' }] },
   });
@@ -1766,85 +1945,115 @@ beforeAll(async () => {
       state: 'completed',
     },
   });
-  batchId = b.id;
+  await prisma.image.create({
+    data: {
+      batchId: b.id,
+      blobPath: 'https://example.blob.vercel-storage.com/img.jpg',
+      width: 100,
+      height: 100,
+      state: 'approved',
+    },
+  });
 });
+
 afterAll(async () => {
+  __setFakeSession(null);
   await prisma.auditLog.deleteMany({});
+  await prisma.annotation.deleteMany({});
+  await prisma.reviewEvent.deleteMany({});
+  await prisma.image.deleteMany({});
   await prisma.batch.deleteMany({});
   await prisma.project.deleteMany({});
   await prisma.user.deleteMany({});
   await prisma.emailWhitelist.deleteMany({});
 });
 
-function withCookie(cookie?: string): Request {
-  return new Request(`http://localhost/api/batches/${batchId}/export`, {
+function makeReq(cookie?: string): Request {
+  return new Request(`http://localhost/api/projects/${projectId}/export`, {
     headers: cookie ? { cookie } : {},
   });
 }
 
-describe('export requires reviewer step-up', () => {
-  it('403 without cookie even as final_reviewer', async () => {
-    const res = await withTestSession(
-      { userId: reviewerId, role: 'final_reviewer', email: 'r@t.com' },
-      async () => GET(withCookie(), { params: Promise.resolve({ id: batchId }) }),
-    );
+describe('GET /api/projects/[id]/export — scope relaxation + step-up', () => {
+  it('401 as final_reviewer without cookie', async () => {
+    __setFakeSession({ user: { id: reviewerId, email: 'r@t.com', role: 'final_reviewer' } });
+    const res = await GET(makeReq(), { params: Promise.resolve({ id: projectId }) });
+    expect(res.status).toBe(401);
+  });
+
+  it('200 as final_reviewer with reviewer cookie', async () => {
+    __setFakeSession({ user: { id: reviewerId, email: 'r@t.com', role: 'final_reviewer' } });
+    const c = signStepUpCookie({ userId: reviewerId, scope: 'reviewer' });
+    const res = await GET(makeReq(`${stepUpCookieName('reviewer')}=${c}`), {
+      params: Promise.resolve({ id: projectId }),
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('403 as annotator even with reviewer cookie', async () => {
+    __setFakeSession({ user: { id: annotatorId, email: 'n@t.com', role: 'annotator' } });
+    const c = signStepUpCookie({ userId: annotatorId, scope: 'reviewer' });
+    const res = await GET(makeReq(`${stepUpCookieName('reviewer')}=${c}`), {
+      params: Promise.resolve({ id: projectId }),
+    });
     expect(res.status).toBe(403);
   });
 
-  it('200 with cookie as final_reviewer', async () => {
-    const c = signStepUpCookie({ userId: reviewerId, scope: 'reviewer' });
-    const res = await withTestSession(
-      { userId: reviewerId, role: 'final_reviewer', email: 'r@t.com' },
-      async () =>
-        GET(withCookie(`${stepUpCookieName('reviewer')}=${c}`), {
-          params: Promise.resolve({ id: batchId }),
-        }),
-    );
-    expect(res.status).toBe(200);
+  it('401 as final_reviewer with admin cookie (wrong scope)', async () => {
+    __setFakeSession({ user: { id: reviewerId, email: 'r@t.com', role: 'final_reviewer' } });
+    const c = signStepUpCookie({ userId: reviewerId, scope: 'admin' });
+    const res = await GET(makeReq(`${stepUpCookieName('admin')}=${c}`), {
+      params: Promise.resolve({ id: projectId }),
+    });
+    expect(res.status).toBe(401);
   });
 });
 ```
 
-- [ ] **Step 2: 確認失敗**
+- [x] **Step 2: 確認失敗**
 
 Run: `pnpm test tests/integration/export-stepup.test.ts`
 Expected: FAIL。
 
-- [ ] **Step 3: 改 export route — 放寬 role + requireStepUp**
+- [x] **Step 3: 改 export route — 放寬 role + stepUpOr401**
 
-Edit `web/app/api/batches/[id]/export/route.ts`：
+Edit `web/app/api/projects/[id]/export/route.ts`：
 
 找原本的 role check，改為：
 
 ```typescript
-import { requireStepUp, StepUpRequiredError } from '@/lib/rbac';
+import { stepUpOr401 } from '@/lib/rbac';
 
-// ... GET handler
+// ... GET handler — first arg renamed `_req` → `req` because we now read cookie
 const session = await getSession();
 const role = session?.user.role;
 if (role !== 'admin' && role !== 'final_reviewer') {
   return NextResponse.json({ error: 'forbidden' }, { status: 403 });
 }
-try {
-  requireStepUp(session, 'reviewer', req);
-} catch (e) {
-  if (e instanceof StepUpRequiredError) {
-    return NextResponse.json({ error: 'step_up_required', scope: 'reviewer' }, { status: 403 });
-  }
-  return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
-}
+const denial = stepUpOr401(session, 'reviewer', req);
+if (denial) return denial;
 // ... rest
 ```
 
-- [ ] **Step 4: 確認所有測試通過**
+> **Plan amendments (2026-04-16, post-P4 I1 pattern):**
+> - Actual export route is `/api/projects/[id]/export` (scoped by project id), not `/api/batches/[id]/export`. Plan path corrected.
+> - Uses `stepUpOr401` helper from Task 4.3 post-review patch — avoids duplicating the try/catch+instanceof block that led to Task 4.3's I1.
+> - Response status for step_up_required is **401** (matches the helper's contract) instead of the plan's original 403 draft. Client's StepUpDialog already handles 401 from the POST flow, so this is consistent.
+> - Tests use `__setFakeSession` directly per repo convention.
+> - Added a 4th coverage test (annotator with reviewer cookie → 403) to prove role check runs before step-up (same "no implicit inheritance" guarantee tested in Task 4.3).
+
+- [x] **Step 4: 確認所有測試通過**
 
 Run: `pnpm test`
-Expected: PASS（包括既有 export 測試 — 若原測試沒帶 cookie，補一個 valid cookie）。
+Expected: PASS — existing `web/tests/integration/export.test.ts` was updated to inject a valid `stepup_reviewer` cookie (admin user + reviewer scope); `AUTH_SECRET` added via `beforeAll`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
-git add web/app/api/batches/ web/tests/integration/export-stepup.test.ts
+git add web/app/api/projects/\[id\]/export/route.ts \
+        web/tests/integration/export-stepup.test.ts \
+        web/tests/integration/export.test.ts \
+        docs/superpowers/plans/2026-04-16-three-interfaces-step-up-auth.md
 git commit -m "feat(web): export allows final_reviewer + requires reviewer step-up"
 ```
 
