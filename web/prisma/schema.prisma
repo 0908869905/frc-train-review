@@ -1,0 +1,150 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  admin
+  annotator
+  final_reviewer
+}
+
+enum BatchState {
+  pending_upload
+  ready
+  in_annotation
+  under_review
+  completed
+}
+
+enum ImageState {
+  unassigned
+  assigned
+  annotated
+  under_review
+  approved
+  needs_rework
+}
+
+enum AnnotationSource {
+  gemini
+  human
+}
+
+enum ReviewAction {
+  approve
+  reject
+}
+
+model User {
+  id         String   @id @default(cuid())
+  email      String   @unique
+  name       String?
+  role       Role     @default(annotator)
+  isActive   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  uploadedBatches Batch[]        @relation("BatchUploader")
+  assignedImages  Image[]        @relation("ImageAssignee")
+  annotations     Annotation[]
+  reviews         ReviewEvent[]
+  auditLogs       AuditLog[]
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  // Ordered list of {idx, name, color}. Index = YOLO class index.
+  classes     Json
+  createdAt   DateTime @default(now())
+
+  batches Batch[]
+}
+
+model Batch {
+  id         String     @id @default(cuid())
+  project    Project    @relation(fields: [projectId], references: [id])
+  projectId  String
+  uploader   User       @relation("BatchUploader", fields: [uploaderId], references: [id])
+  uploaderId String
+  name       String
+  source     String?
+  state      BatchState @default(pending_upload)
+  createdAt  DateTime   @default(now())
+
+  images Image[]
+}
+
+model Image {
+  id            String     @id @default(cuid())
+  batch         Batch      @relation(fields: [batchId], references: [id])
+  batchId       String
+  blobPath      String
+  thumbnailPath String?
+  width         Int
+  height        Int
+  assignedTo    User?      @relation("ImageAssignee", fields: [assignedToId], references: [id])
+  assignedToId  String?
+  state         ImageState @default(unassigned)
+  updatedAt     DateTime   @updatedAt
+
+  annotations  Annotation[]
+  reviewEvents ReviewEvent[]
+
+  @@index([batchId, state])
+  @@index([assignedToId, state])
+}
+
+model Annotation {
+  id        String           @id @default(cuid())
+  image     Image            @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  imageId   String
+  classIdx  Int
+  x         Float
+  y         Float
+  w         Float
+  h         Float
+  source    AnnotationSource
+  author    User?            @relation(fields: [authorId], references: [id])
+  authorId  String?
+  updatedAt DateTime         @updatedAt
+
+  @@index([imageId])
+}
+
+model ReviewEvent {
+  id         String       @id @default(cuid())
+  image      Image        @relation(fields: [imageId], references: [id])
+  imageId    String
+  reviewer   User         @relation(fields: [reviewerId], references: [id])
+  reviewerId String
+  action     ReviewAction
+  comment    String?
+  createdAt  DateTime     @default(now())
+
+  @@index([imageId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actor      User     @relation(fields: [actorId], references: [id])
+  actorId    String
+  action     String
+  targetType String
+  targetId   String
+  payload    Json
+  createdAt  DateTime @default(now())
+
+  @@index([targetType, targetId])
+}
+
+model EmailWhitelist {
+  email     String   @id
+  role      Role
+  addedById String?
+  addedAt   DateTime @default(now())
+}
