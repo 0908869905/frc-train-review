@@ -48,6 +48,14 @@ describe('signStepUpCookie / verifyStepUpCookie', () => {
     expect(verifyStepUpCookie(tampered, { userId: USER_ID, scope: 'reviewer' })).toBe(false);
   });
 
+  it('rejects cookie with tampered exp (MAC path)', () => {
+    const cookie = signStepUpCookie({ userId: USER_ID, scope: 'reviewer' });
+    const parts = cookie.split('.');
+    parts[2] = String(Number(parts[2]) + 1000); // tamper exp, don't re-sign
+    const tampered = parts.join('.');
+    expect(verifyStepUpCookie(tampered, { userId: USER_ID, scope: 'reviewer' })).toBe(false);
+  });
+
   it('rejects mismatched userId', () => {
     const cookie = signStepUpCookie({ userId: USER_ID, scope: 'reviewer' });
     expect(verifyStepUpCookie(cookie, { userId: 'user_different', scope: 'reviewer' })).toBe(false);
