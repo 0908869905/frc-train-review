@@ -46,6 +46,7 @@ model User {
   role       Role     @default(annotator)
   isActive   Boolean  @default(true)
   createdAt  DateTime @default(now())
+  displayNameSetAt DateTime?
 
   uploadedBatches Batch[]        @relation("BatchUploader")
   assignedImages  Image[]        @relation("ImageAssignee")
