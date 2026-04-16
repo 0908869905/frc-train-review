@@ -31,7 +31,15 @@ export function NameForm({ initial, isEdit }: { initial: string; isEdit: boolean
     // Trigger jwt() callback to re-read displayNameSetAt from DB so proxy.ts
     // sees the updated claim on the next request. Without this, the proxy
     // gate would redirect us right back to /onboarding/name in a loop.
-    await update();
+    // If update() fails, fall back to full-page nav so the server re-reads
+    // the cookie fresh — still escapes the loop without leaving user stuck.
+    try {
+      await update();
+    } catch {
+      setSaving(false);
+      window.location.href = '/';
+      return;
+    }
     setSaving(false);
     router.push('/');
   }
