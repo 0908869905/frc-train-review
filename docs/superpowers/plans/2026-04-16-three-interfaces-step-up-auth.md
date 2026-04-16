@@ -490,8 +490,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import argon2 from 'argon2';
 import { prisma } from '@/lib/db';
 import { POST, GET } from '@/app/api/auth/step-up/route';
-import { withTestSession } from '@/lib/auth-test';
-import { _resetInMemoryRateLimit } from '@/lib/stepup';
+import { __setFakeSession } from '@/lib/auth-test';
+import { _resetInMemoryRateLimit, stepUpCookieName, signStepUpCookie } from '@/lib/stepup';
 
 const REVIEWER_PW = 'test-reviewer-pw';
 let userId: string;
@@ -501,48 +501,59 @@ beforeAll(async () => {
   process.env.REVIEWER_PASSWORD_HASH = await argon2.hash(REVIEWER_PW, {
     type: argon2.argon2id,
   });
+  delete process.env.UPSTASH_REDIS_REST_URL;
+  delete process.env.UPSTASH_REDIS_REST_TOKEN;
   await prisma.auditLog.deleteMany({});
+  await prisma.annotation.deleteMany({});
+  await prisma.reviewEvent.deleteMany({});
+  await prisma.image.deleteMany({});
+  await prisma.batch.deleteMany({});
+  await prisma.project.deleteMany({});
   await prisma.emailWhitelist.deleteMany({});
   await prisma.user.deleteMany({});
-  const wl = await prisma.emailWhitelist.create({
+  await prisma.emailWhitelist.create({
     data: { email: 'r@test.com', role: 'final_reviewer' },
   });
   const u = await prisma.user.create({
     data: { email: 'r@test.com', name: 'R', role: 'final_reviewer' },
   });
   userId = u.id;
+  __setFakeSession({ user: { id: userId, email: 'r@test.com', role: 'final_reviewer' } });
 });
 
-beforeEach(() => _resetInMemoryRateLimit());
+beforeEach(() => {
+  _resetInMemoryRateLimit();
+  __setFakeSession({ user: { id: userId, email: 'r@test.com', role: 'final_reviewer' } });
+});
 
 afterAll(async () => {
+  __setFakeSession(null);
   await prisma.auditLog.deleteMany({});
+  await prisma.annotation.deleteMany({});
+  await prisma.reviewEvent.deleteMany({});
+  await prisma.image.deleteMany({});
+  await prisma.batch.deleteMany({});
+  await prisma.project.deleteMany({});
   await prisma.user.deleteMany({});
   await prisma.emailWhitelist.deleteMany({});
 });
 
-function makeReq(body: object, method = 'POST'): Request {
-  return new Request('http://localhost/api/auth/step-up', {
+function makeReq(body: object | null, method = 'POST', search = ''): Request {
+  return new Request(`http://localhost/api/auth/step-up${search}`, {
     method,
     headers: { 'content-type': 'application/json' },
-    body: method === 'POST' ? JSON.stringify(body) : undefined,
+    body: method === 'POST' && body !== null ? JSON.stringify(body) : undefined,
   });
 }
 
 describe('POST /api/auth/step-up', () => {
   it('401 on wrong password', async () => {
-    const res = await withTestSession(
-      { userId, role: 'final_reviewer', email: 'r@test.com' },
-      async () => POST(makeReq({ password: 'wrong', scope: 'reviewer' })),
-    );
+    const res = await POST(makeReq({ password: 'wrong', scope: 'reviewer' }));
     expect(res.status).toBe(401);
   });
 
   it('200 on correct password + sets cookie', async () => {
-    const res = await withTestSession(
-      { userId, role: 'final_reviewer', email: 'r@test.com' },
-      async () => POST(makeReq({ password: REVIEWER_PW, scope: 'reviewer' })),
-    );
+    const res = await POST(makeReq({ password: REVIEWER_PW, scope: 'reviewer' }));
     expect(res.status).toBe(200);
     const setCookie = res.headers.get('set-cookie') ?? '';
     expect(setCookie).toContain('stepup_reviewer=');
@@ -551,19 +562,62 @@ describe('POST /api/auth/step-up', () => {
     expect(setCookie).toMatch(/SameSite=Lax/i);
   });
 
+  it('401 when unauthenticated', async () => {
+    __setFakeSession(null);
+    const res = await POST(makeReq({ password: REVIEWER_PW, scope: 'reviewer' }));
+    expect(res.status).toBe(401);
+  });
+
+  it('400 on bad body', async () => {
+    const res = await POST(makeReq({ scope: 'reviewer' })); // missing password
+    expect(res.status).toBe(400);
+  });
+
   it('429 on 6th failed attempt', async () => {
-    _resetInMemoryRateLimit();
     for (let i = 0; i < 5; i++) {
-      await withTestSession(
-        { userId, role: 'final_reviewer', email: 'r@test.com' },
-        async () => POST(makeReq({ password: 'wrong', scope: 'reviewer' })),
-      );
+      await POST(makeReq({ password: 'wrong', scope: 'reviewer' }));
     }
-    const res = await withTestSession(
-      { userId, role: 'final_reviewer', email: 'r@test.com' },
-      async () => POST(makeReq({ password: 'wrong', scope: 'reviewer' })),
-    );
+    const res = await POST(makeReq({ password: 'wrong', scope: 'reviewer' }));
     expect(res.status).toBe(429);
+  });
+
+  it('writes audit log on failure and success', async () => {
+    await prisma.auditLog.deleteMany({});
+    await POST(makeReq({ password: 'wrong', scope: 'reviewer' }));
+    const failLog = await prisma.auditLog.findFirst({ where: { action: 'auth.stepup_failed' } });
+    expect(failLog).not.toBeNull();
+
+    await POST(makeReq({ password: REVIEWER_PW, scope: 'reviewer' }));
+    const grantLog = await prisma.auditLog.findFirst({ where: { action: 'auth.stepup_granted' } });
+    expect(grantLog).not.toBeNull();
+  });
+});
+
+describe('GET /api/auth/step-up', () => {
+  it('returns { granted: false } when no cookie', async () => {
+    const req = makeReq(null, 'GET', '?scope=reviewer');
+    const res = await GET(req);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.granted).toBe(false);
+  });
+
+  it('returns { granted: true } when cookie is valid', async () => {
+    const cookie = signStepUpCookie({ userId, scope: 'reviewer' });
+    const req = new Request('http://localhost/api/auth/step-up?scope=reviewer', {
+      method: 'GET',
+      headers: { cookie: `${stepUpCookieName('reviewer')}=${cookie}` },
+    });
+    const res = await GET(req);
+    const data = await res.json();
+    expect(data.granted).toBe(true);
+  });
+
+  it('returns { granted: false } when scope param missing', async () => {
+    const req = makeReq(null, 'GET');
+    const res = await GET(req);
+    const data = await res.json();
+    expect(data.granted).toBe(false);
   });
 });
 ```
@@ -619,13 +673,7 @@ export async function POST(req: NextRequest | Request) {
 
   const ok = await verifyStepUpPassword(scope as StepUpScope, password);
   if (!ok) {
-    await writeAudit({
-      actorId: session.user.id,
-      action: 'auth.stepup_failed',
-      targetType: 'stepup',
-      targetId: scope,
-      payload: {},
-    });
+    await writeAudit(session.user.id, 'auth.stepup_failed', 'stepup', scope, {});
     return NextResponse.json({ error: 'invalid_password' }, { status: 401 });
   }
 
@@ -633,13 +681,7 @@ export async function POST(req: NextRequest | Request) {
     userId: session.user.id,
     scope: scope as StepUpScope,
   });
-  await writeAudit({
-    actorId: session.user.id,
-    action: 'auth.stepup_granted',
-    targetType: 'stepup',
-    targetId: scope,
-    payload: {},
-  });
+  await writeAudit(session.user.id, 'auth.stepup_granted', 'stepup', scope, {});
   const res = NextResponse.json({ granted: true });
   res.cookies.set(stepUpCookieName(scope as StepUpScope), cookie, {
     httpOnly: true,
@@ -675,6 +717,10 @@ export async function GET(req: NextRequest | Request) {
 }
 ```
 
+> **Plan amendments (2026-04-16):**
+> - `writeAudit` uses positional args per existing `lib/audit.ts` signature (object-arg form in earlier draft would not compile).
+> - Tests use `__setFakeSession` directly per repo convention (`withTestSession` helper does not exist and creating it would diverge from existing integration tests in `tests/integration/`). Added 4 branch-coverage tests (401 unauth, 400 bad body, audit log check, GET happy/sad) to match the rigor applied to `lib/stepup.ts` tests.
+
 - [ ] **Step 4: 確認測試通過**
 
 Run: `pnpm test tests/integration/stepup-api.test.ts`
@@ -683,7 +729,7 @@ Expected: PASS。
 - [ ] **Step 5: Commit**
 
 ```bash
-git add web/app/api/auth/step-up/ web/tests/integration/stepup-api.test.ts
+git add web/app/api/auth/step-up/ web/tests/integration/stepup-api.test.ts docs/superpowers/plans/2026-04-16-three-interfaces-step-up-auth.md
 git commit -m "feat(web): /api/auth/step-up POST+GET with audit + rate limit"
 ```
 
