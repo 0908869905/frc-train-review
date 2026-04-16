@@ -84,3 +84,51 @@ export function verifyStepUpCookie(
 export function stepUpCookieName(scope: StepUpScope): string {
   return `stepup_${scope}`;
 }
+
+type RateState = { count: number; windowStart: number; lockedUntil?: number };
+const inMemory = new Map<string, RateState>();
+const WINDOW_MS = 60_000;
+const MAX_IN_WINDOW = 5;
+const LOCK_MS = 10 * 60_000;
+
+export function _resetInMemoryRateLimit() {
+  inMemory.clear();
+}
+
+export async function checkStepUpRateLimit(
+  userId: string,
+): Promise<{ allowed: boolean; retryAfterSec?: number }> {
+  const upstashUrl = process.env.UPSTASH_REDIS_REST_URL;
+  const upstashToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+  if (upstashUrl && upstashToken) {
+    const { Ratelimit } = await import('@upstash/ratelimit');
+    const { Redis } = await import('@upstash/redis');
+    const redis = new Redis({ url: upstashUrl, token: upstashToken });
+    const ratelimit = new Ratelimit({
+      redis,
+      limiter: Ratelimit.fixedWindow(MAX_IN_WINDOW, '60 s'),
+      prefix: 'stepup',
+    });
+    const res = await ratelimit.limit(userId);
+    return {
+      allowed: res.success,
+      retryAfterSec: res.success ? undefined : Math.ceil((res.reset - Date.now()) / 1000),
+    };
+  }
+
+  const now = Date.now();
+  const s = inMemory.get(userId);
+  if (s?.lockedUntil && now < s.lockedUntil) {
+    return { allowed: false, retryAfterSec: Math.ceil((s.lockedUntil - now) / 1000) };
+  }
+  if (!s || now - s.windowStart > WINDOW_MS) {
+    inMemory.set(userId, { count: 1, windowStart: now });
+    return { allowed: true };
+  }
+  if (s.count >= MAX_IN_WINDOW) {
+    s.lockedUntil = now + LOCK_MS;
+    return { allowed: false, retryAfterSec: LOCK_MS / 1000 };
+  }
+  s.count += 1;
+  return { allowed: true };
+}

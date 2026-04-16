@@ -71,3 +71,28 @@ describe('signStepUpCookie / verifyStepUpCookie', () => {
     expect(verifyStepUpCookie(cookie, { userId: USER_ID, scope: 'reviewer' })).toBe(false);
   });
 });
+
+describe('checkStepUpRateLimit (in-memory fallback)', () => {
+  const USER = 'user_rate_test';
+  beforeAll(() => {
+    delete process.env.UPSTASH_REDIS_REST_URL;
+    delete process.env.UPSTASH_REDIS_REST_TOKEN;
+  });
+  it('allows first 5 attempts in 60s window', async () => {
+    const { checkStepUpRateLimit, _resetInMemoryRateLimit } = await import('@/lib/stepup');
+    _resetInMemoryRateLimit();
+    for (let i = 0; i < 5; i++) {
+      const res = await checkStepUpRateLimit(USER);
+      expect(res.allowed).toBe(true);
+    }
+  });
+
+  it('blocks 6th attempt', async () => {
+    const { checkStepUpRateLimit, _resetInMemoryRateLimit } = await import('@/lib/stepup');
+    _resetInMemoryRateLimit();
+    for (let i = 0; i < 5; i++) await checkStepUpRateLimit(USER);
+    const res = await checkStepUpRateLimit(USER);
+    expect(res.allowed).toBe(false);
+    expect(res.retryAfterSec).toBeGreaterThan(0);
+  });
+});
