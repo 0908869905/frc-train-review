@@ -556,10 +556,12 @@ describe('POST /api/auth/step-up', () => {
     const res = await POST(makeReq({ password: REVIEWER_PW, scope: 'reviewer' }));
     expect(res.status).toBe(200);
     const setCookie = res.headers.get('set-cookie') ?? '';
-    expect(setCookie).toContain('stepup_reviewer=');
-    expect(setCookie).toContain('HttpOnly');
-    expect(setCookie).toContain('Secure');
+    expect(setCookie).toMatch(/stepup_reviewer=/);
+    expect(setCookie).toMatch(/HttpOnly/i);
     expect(setCookie).toMatch(/SameSite=Lax/i);
+    // Note: `Secure` is only set when NODE_ENV === 'production'. Tests run with
+    // NODE_ENV=test so the attribute is intentionally absent. Production E2E
+    // (Playwright against Vercel preview in Task 7.1) exercises the Secure path.
   });
 
   it('401 when unauthenticated', async () => {
@@ -594,6 +596,13 @@ describe('POST /api/auth/step-up', () => {
 });
 
 describe('GET /api/auth/step-up', () => {
+  it('401 when unauthenticated', async () => {
+    __setFakeSession(null);
+    const req = makeReq(null, 'GET', '?scope=reviewer');
+    const res = await GET(req);
+    expect(res.status).toBe(401);
+  });
+
   it('returns { granted: false } when no cookie', async () => {
     const req = makeReq(null, 'GET', '?scope=reviewer');
     const res = await GET(req);
@@ -641,7 +650,6 @@ import {
   signStepUpCookie,
   verifyStepUpCookie,
   stepUpCookieName,
-  type StepUpScope,
 } from '@/lib/stepup';
 import { writeAudit } from '@/lib/audit';
 
@@ -671,7 +679,7 @@ export async function POST(req: NextRequest | Request) {
     );
   }
 
-  const ok = await verifyStepUpPassword(scope as StepUpScope, password);
+  const ok = await verifyStepUpPassword(scope, password);
   if (!ok) {
     await writeAudit(session.user.id, 'auth.stepup_failed', 'stepup', scope, {});
     return NextResponse.json({ error: 'invalid_password' }, { status: 401 });
@@ -679,13 +687,13 @@ export async function POST(req: NextRequest | Request) {
 
   const cookie = signStepUpCookie({
     userId: session.user.id,
-    scope: scope as StepUpScope,
+    scope,
   });
   await writeAudit(session.user.id, 'auth.stepup_granted', 'stepup', scope, {});
   const res = NextResponse.json({ granted: true });
-  res.cookies.set(stepUpCookieName(scope as StepUpScope), cookie, {
+  res.cookies.set(stepUpCookieName(scope), cookie, {
     httpOnly: true,
-    secure: true,
+    secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     path: '/',
     maxAge: 3600,
@@ -696,7 +704,7 @@ export async function POST(req: NextRequest | Request) {
 export async function GET(req: NextRequest | Request) {
   const session = await getSession();
   if (!session?.user?.id) {
-    return NextResponse.json({ granted: false });
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   const url = new URL(req.url);
   const scope = url.searchParams.get('scope');
@@ -720,6 +728,7 @@ export async function GET(req: NextRequest | Request) {
 > **Plan amendments (2026-04-16):**
 > - `writeAudit` uses positional args per existing `lib/audit.ts` signature (object-arg form in earlier draft would not compile).
 > - Tests use `__setFakeSession` directly per repo convention (`withTestSession` helper does not exist and creating it would diverge from existing integration tests in `tests/integration/`). Added 4 branch-coverage tests (401 unauth, 400 bad body, audit log check, GET happy/sad) to match the rigor applied to `lib/stepup.ts` tests.
+> - Follow-up amendments (post-review): (I1) GET now returns 401 on unauth instead of `{granted:false}` — symmetric with POST and fail-fast. (I2) Cookie `secure` flag is `NODE_ENV === 'production'` so local HTTP dev + Playwright localhost can exercise the guard; production stays strict. (M1) Removed redundant `as StepUpScope` casts now that zod enum narrowing is trusted. (M7) Set-Cookie assertions unified on case-insensitive regex.
 
 - [ ] **Step 4: 確認測試通過**
 

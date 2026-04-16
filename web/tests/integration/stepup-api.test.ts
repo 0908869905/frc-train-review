@@ -68,10 +68,12 @@ describe('POST /api/auth/step-up', () => {
     const res = await POST(makeReq({ password: REVIEWER_PW, scope: 'reviewer' }));
     expect(res.status).toBe(200);
     const setCookie = res.headers.get('set-cookie') ?? '';
-    expect(setCookie).toContain('stepup_reviewer=');
-    expect(setCookie).toContain('HttpOnly');
-    expect(setCookie).toContain('Secure');
+    expect(setCookie).toMatch(/stepup_reviewer=/);
+    expect(setCookie).toMatch(/HttpOnly/i);
     expect(setCookie).toMatch(/SameSite=Lax/i);
+    // Note: `Secure` is only set when NODE_ENV === 'production'. Tests run with
+    // NODE_ENV=test so the attribute is intentionally absent. Production E2E
+    // (Playwright against Vercel preview in Task 7.1) exercises the Secure path.
   });
 
   it('401 when unauthenticated', async () => {
@@ -106,6 +108,13 @@ describe('POST /api/auth/step-up', () => {
 });
 
 describe('GET /api/auth/step-up', () => {
+  it('401 when unauthenticated', async () => {
+    __setFakeSession(null);
+    const req = makeReq(null, 'GET', '?scope=reviewer');
+    const res = await GET(req);
+    expect(res.status).toBe(401);
+  });
+
   it('returns { granted: false } when no cookie', async () => {
     const req = makeReq(null, 'GET', '?scope=reviewer');
     const res = await GET(req);

@@ -7,7 +7,6 @@ import {
   signStepUpCookie,
   verifyStepUpCookie,
   stepUpCookieName,
-  type StepUpScope,
 } from '@/lib/stepup';
 import { writeAudit } from '@/lib/audit';
 
@@ -37,7 +36,7 @@ export async function POST(req: NextRequest | Request) {
     );
   }
 
-  const ok = await verifyStepUpPassword(scope as StepUpScope, password);
+  const ok = await verifyStepUpPassword(scope, password);
   if (!ok) {
     await writeAudit(session.user.id, 'auth.stepup_failed', 'stepup', scope, {});
     return NextResponse.json({ error: 'invalid_password' }, { status: 401 });
@@ -45,13 +44,13 @@ export async function POST(req: NextRequest | Request) {
 
   const cookie = signStepUpCookie({
     userId: session.user.id,
-    scope: scope as StepUpScope,
+    scope,
   });
   await writeAudit(session.user.id, 'auth.stepup_granted', 'stepup', scope, {});
   const res = NextResponse.json({ granted: true });
-  res.cookies.set(stepUpCookieName(scope as StepUpScope), cookie, {
+  res.cookies.set(stepUpCookieName(scope), cookie, {
     httpOnly: true,
-    secure: true,
+    secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax',
     path: '/',
     maxAge: 3600,
@@ -62,7 +61,7 @@ export async function POST(req: NextRequest | Request) {
 export async function GET(req: NextRequest | Request) {
   const session = await getSession();
   if (!session?.user?.id) {
-    return NextResponse.json({ granted: false });
+    return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
   const url = new URL(req.url);
   const scope = url.searchParams.get('scope');
