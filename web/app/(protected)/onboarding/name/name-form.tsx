@@ -19,16 +19,23 @@ export function NameForm({ initial, isEdit }: { initial: string; isEdit: boolean
     });
     setSaving(false);
     if (!res.ok) {
+      if (res.status === 401) {
+        router.push('/login');
+        return;
+      }
       setErr('儲存失敗，請稍後再試');
       return;
     }
     router.push('/');
-    router.refresh();
   }
 
   return (
     <form onSubmit={submit} className="space-y-4">
+      <label htmlFor="display-name" className="sr-only">
+        姓名
+      </label>
       <input
+        id="display-name"
         className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
         value={name}
         onChange={(e) => setName(e.target.value)}
