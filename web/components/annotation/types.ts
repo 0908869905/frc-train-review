@@ -1,4 +1,9 @@
-export type ClassDef = { idx: number; name: string; color: string };
+export type ClassDef = {
+  idx: number;
+  name: string;
+  color: string;
+  shortcut?: string;
+};
 
 export type Box = {
   id: string;

@@ -29,7 +29,9 @@ export function ClassPalette({
             style={{ backgroundColor: c.color }}
           />
           <span className="flex-1">{c.name}</span>
-          <span className="text-[10px] border px-1 rounded">{c.idx + 1}</span>
+          <span className="text-[10px] border px-1 rounded uppercase">
+            {c.shortcut ?? c.idx + 1}
+          </span>
         </button>
       ))}
     </div>

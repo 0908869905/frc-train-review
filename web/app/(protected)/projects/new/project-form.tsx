@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 
-type ClassRow = { idx: number; name: string; color: string };
+type ClassRow = { idx: number; name: string; color: string; shortcut?: string };
 
 const DEFAULT_CLASSES: ClassRow[] = [
   { idx: 0, name: 'class_0', color: '#ef4444' },
@@ -39,10 +39,14 @@ export function ProjectForm() {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
+    const normalized = classes.map((c) => ({
+      ...c,
+      shortcut: c.shortcut && c.shortcut.length === 1 ? c.shortcut : undefined,
+    }));
     const res = await fetch('/api/projects', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ name, description, classes }),
+      body: JSON.stringify({ name, description, classes: normalized }),
     });
     setBusy(false);
     if (res.ok) {
@@ -95,6 +99,19 @@ export function ProjectForm() {
                 type="color"
                 value={c.color}
                 onChange={(e) => updateClass(i, { color: e.target.value })}
+              />
+              <input
+                type="text"
+                maxLength={1}
+                placeholder="key"
+                value={c.shortcut ?? ''}
+                onChange={(e) =>
+                  updateClass(i, {
+                    shortcut:
+                      e.target.value.toLowerCase() || undefined,
+                  })
+                }
+                className="w-12 rounded border border-neutral-300 px-2 py-1 text-sm uppercase text-center"
               />
               <Button
                 type="button"
