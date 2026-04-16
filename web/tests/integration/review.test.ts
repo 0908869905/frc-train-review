@@ -6,6 +6,7 @@ describe('review flow', () => {
   let imageId: string;
 
   beforeEach(async () => {
+    await prisma.auditLog.deleteMany();
     await prisma.annotation.deleteMany();
     await prisma.reviewEvent.deleteMany();
     await prisma.image.deleteMany();

@@ -15,6 +15,8 @@ async function adminSession() {
 
 describe('POST /api/projects', () => {
   beforeEach(async () => {
+    await prisma.auditLog.deleteMany();
+    await prisma.reviewEvent.deleteMany();
     await prisma.annotation.deleteMany();
     await prisma.image.deleteMany();
     await prisma.batch.deleteMany();
@@ -60,6 +62,8 @@ describe('POST /api/projects', () => {
 
 describe('PATCH /api/projects/[id]', () => {
   beforeEach(async () => {
+    await prisma.auditLog.deleteMany();
+    await prisma.reviewEvent.deleteMany();
     await prisma.annotation.deleteMany();
     await prisma.image.deleteMany();
     await prisma.batch.deleteMany();

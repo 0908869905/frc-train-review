@@ -6,6 +6,8 @@ describe('PATCH /api/images/[id]/annotations', () => {
   let imageId: string;
 
   beforeEach(async () => {
+    await prisma.auditLog.deleteMany();
+    await prisma.reviewEvent.deleteMany();
     await prisma.annotation.deleteMany();
     await prisma.image.deleteMany();
     await prisma.batch.deleteMany();
@@ -100,6 +102,8 @@ describe('POST /api/images/[id]/submit', () => {
   let secondImageId: string;
 
   beforeEach(async () => {
+    await prisma.auditLog.deleteMany();
+    await prisma.reviewEvent.deleteMany();
     await prisma.annotation.deleteMany();
     await prisma.image.deleteMany();
     await prisma.batch.deleteMany();

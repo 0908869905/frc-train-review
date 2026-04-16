@@ -14,6 +14,8 @@ vi.mock('@vercel/blob', () => ({
 describe('POST /api/batches/[id]/finalize', () => {
   beforeEach(async () => {
     vi.restoreAllMocks();
+    await prisma.auditLog.deleteMany();
+    await prisma.reviewEvent.deleteMany();
     await prisma.annotation.deleteMany();
     await prisma.image.deleteMany();
     await prisma.batch.deleteMany();

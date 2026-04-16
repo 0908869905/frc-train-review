@@ -7,6 +7,8 @@ describe('POST /api/batches/[id]/assign', () => {
   const IMAGE_IDS: string[] = [];
 
   beforeEach(async () => {
+    await prisma.auditLog.deleteMany();
+    await prisma.reviewEvent.deleteMany();
     await prisma.annotation.deleteMany();
     await prisma.image.deleteMany();
     await prisma.batch.deleteMany();

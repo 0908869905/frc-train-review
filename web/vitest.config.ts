@@ -6,6 +6,7 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['tests/unit/**/*.test.ts', 'tests/integration/**/*.test.ts'],
+    fileParallelism: false,
   },
   resolve: {
     alias: { '@': path.resolve(__dirname, '.') },
