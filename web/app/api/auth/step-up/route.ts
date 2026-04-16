@@ -17,6 +17,15 @@ const postBody = z.object({
 });
 
 export async function POST(req: NextRequest | Request) {
+  const origin = req.headers.get('origin');
+  if (
+    origin &&
+    process.env.NEXT_PUBLIC_APP_URL &&
+    origin !== process.env.NEXT_PUBLIC_APP_URL
+  ) {
+    return NextResponse.json({ error: 'bad_origin' }, { status: 403 });
+  }
+
   const session = await getSession();
   if (!session?.user?.id) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });

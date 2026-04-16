@@ -47,7 +47,7 @@ describe('GET /api/projects/[id]/export', () => {
     const img = await prisma.image.create({
       data: {
         batchId: b.id,
-        blobPath: 'https://fake/img.jpg',
+        blobPath: 'https://fake.public.blob.vercel-storage.com/img.jpg',
         width: 0,
         height: 0,
         state: 'approved',

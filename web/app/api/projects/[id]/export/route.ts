@@ -49,6 +49,20 @@ export async function GET(
 
   for (let i = 0; i < images.length; i++) {
     const img = images[i];
+    try {
+      const u = new URL(img.blobPath);
+      if (
+        u.protocol !== 'https:' ||
+        !(
+          u.hostname.endsWith('.public.blob.vercel-storage.com') ||
+          u.hostname.endsWith('.blob.vercel-storage.com')
+        )
+      ) {
+        continue;
+      }
+    } catch {
+      continue;
+    }
     const resp = await fetch(img.blobPath);
     if (!resp.ok) continue;
     const bytes = new Uint8Array(await resp.arrayBuffer());
