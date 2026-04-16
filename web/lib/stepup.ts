@@ -104,16 +104,22 @@ export async function checkStepUpRateLimit(
     const { Ratelimit } = await import('@upstash/ratelimit');
     const { Redis } = await import('@upstash/redis');
     const redis = new Redis({ url: upstashUrl, token: upstashToken });
+    const lockKey = `stepup:lock:${userId}`;
+    const lockTtl = await redis.ttl(lockKey);
+    if (typeof lockTtl === 'number' && lockTtl > 0) {
+      return { allowed: false, retryAfterSec: lockTtl };
+    }
     const ratelimit = new Ratelimit({
       redis,
       limiter: Ratelimit.fixedWindow(MAX_IN_WINDOW, '60 s'),
       prefix: 'stepup',
     });
     const res = await ratelimit.limit(userId);
-    return {
-      allowed: res.success,
-      retryAfterSec: res.success ? undefined : Math.ceil((res.reset - Date.now()) / 1000),
-    };
+    if (!res.success) {
+      await redis.set(lockKey, '1', { ex: LOCK_MS / 1000, nx: true });
+      return { allowed: false, retryAfterSec: LOCK_MS / 1000 };
+    }
+    return { allowed: true };
   }
 
   const now = Date.now();

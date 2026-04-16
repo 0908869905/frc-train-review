@@ -4,6 +4,8 @@ import {
   verifyStepUpPassword,
   signStepUpCookie,
   verifyStepUpCookie,
+  checkStepUpRateLimit,
+  _resetInMemoryRateLimit,
 } from '@/lib/stepup';
 
 const TEST_PASSWORD = 'testpass123';
@@ -79,7 +81,6 @@ describe('checkStepUpRateLimit (in-memory fallback)', () => {
     delete process.env.UPSTASH_REDIS_REST_TOKEN;
   });
   it('allows first 5 attempts in 60s window', async () => {
-    const { checkStepUpRateLimit, _resetInMemoryRateLimit } = await import('@/lib/stepup');
     _resetInMemoryRateLimit();
     for (let i = 0; i < 5; i++) {
       const res = await checkStepUpRateLimit(USER);
@@ -88,7 +89,6 @@ describe('checkStepUpRateLimit (in-memory fallback)', () => {
   });
 
   it('blocks 6th attempt', async () => {
-    const { checkStepUpRateLimit, _resetInMemoryRateLimit } = await import('@/lib/stepup');
     _resetInMemoryRateLimit();
     for (let i = 0; i < 5; i++) await checkStepUpRateLimit(USER);
     const res = await checkStepUpRateLimit(USER);
