@@ -2,6 +2,7 @@ import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/session';
 import { requireRole } from '@/lib/rbac';
+import { prisma } from '@/lib/db';
 
 export async function POST(req: Request): Promise<NextResponse> {
   const body = (await req.json()) as HandleUploadBody;
@@ -13,8 +14,22 @@ export async function POST(req: Request): Promise<NextResponse> {
       body,
       request: req,
       onBeforeGenerateToken: async (pathname) => {
-        if (!pathname.startsWith('frc-annotation/batches/')) {
+        const PREFIX = 'frc-annotation/batches/';
+        if (!pathname.startsWith(PREFIX)) {
           throw new Error('Invalid upload path');
+        }
+        const rest = pathname.slice(PREFIX.length);
+        const batchId = rest.split('/')[0];
+        if (!batchId) throw new Error('Invalid upload path');
+        const batch = await prisma.batch.findUnique({
+          where: { id: batchId },
+          select: { state: true, uploaderId: true },
+        });
+        if (!batch || batch.state !== 'pending_upload') {
+          throw new Error('Batch not accepting uploads');
+        }
+        if (batch.uploaderId !== session!.user.id) {
+          throw new Error('Not your batch');
         }
         return {
           allowedContentTypes: [

@@ -5,7 +5,7 @@ import { getSession } from '@/lib/session';
 import { requireRole } from '@/lib/rbac';
 import { validateAndExtractZip } from '@/lib/zip-validator';
 import { parseYoloLabel, parseClassesTxt } from '@/lib/yolo';
-import { putImage, blobKey } from '@/lib/blob';
+import { putImage, blobKey, sniffImageMime } from '@/lib/blob';
 
 const FinalizeBody = z.object({
   zipUrl: z
@@ -56,6 +56,7 @@ export async function POST(
     maxEntries: 1200,
     maxTotalBytes: 500 * 1024 * 1024,
     maxFileBytes: 20 * 1024 * 1024,
+    maxCompressedBytes: 200 * 1024 * 1024,
   });
 
   const classesTxt = entries['classes.txt'];
@@ -100,11 +101,14 @@ export async function POST(
           : '';
         const boxes = labelText ? parseYoloLabel(labelText) : [];
 
-        const blob = await putImage(
-          blobKey(batchId, filename),
-          imgData,
-          filename.toLowerCase().endsWith('.png') ? 'image/png' : 'image/jpeg',
-        );
+        const sniffed = sniffImageMime(imgData);
+        if (!sniffed) {
+          throw Object.assign(
+            new Error(`Unsupported or spoofed image: ${imgPath}`),
+            { status: 400 },
+          );
+        }
+        const blob = await putImage(blobKey(batchId, filename), imgData, sniffed);
 
         const image = await tx.image.create({
           data: {
