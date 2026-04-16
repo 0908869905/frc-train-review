@@ -57,3 +57,39 @@ describe('POST /api/projects', () => {
     await expect(POST(req)).rejects.toMatchObject({ status: 403 });
   });
 });
+
+describe('PATCH /api/projects/[id]', () => {
+  beforeEach(async () => {
+    await prisma.annotation.deleteMany();
+    await prisma.image.deleteMany();
+    await prisma.batch.deleteMany();
+    await prisma.project.deleteMany();
+    await prisma.user.deleteMany();
+    await adminSession();
+  });
+
+  it('updates project name and classes', async () => {
+    const p = await prisma.project.create({
+      data: {
+        name: 'old',
+        classes: [{ idx: 0, name: 'a', color: '#ff0000' }],
+      },
+    });
+    const { PATCH } = await import('@/app/api/projects/[id]/route');
+    const req = new Request(`http://x/api/projects/${p.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        name: 'new',
+        classes: [
+          { idx: 0, name: 'a', color: '#ff0000' },
+          { idx: 1, name: 'b', color: '#00ff00' },
+        ],
+      }),
+    });
+    const res = await PATCH(req, { params: Promise.resolve({ id: p.id }) });
+    expect(res.status).toBe(200);
+    const updated = await prisma.project.findUnique({ where: { id: p.id } });
+    expect(updated?.name).toBe('new');
+  });
+});
