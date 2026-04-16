@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -21,6 +21,19 @@ export function StepUpDialog({
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [lockedUntil, setLockedUntil] = useState<number | null>(null);
+
+  // Auto-clear lock when the retry window elapses, so the form re-enables
+  // without requiring a page refresh.
+  useEffect(() => {
+    if (lockedUntil === null) return;
+    const ms = lockedUntil - Date.now();
+    if (ms <= 0) {
+      setLockedUntil(null);
+      return;
+    }
+    const t = setTimeout(() => setLockedUntil(null), ms);
+    return () => clearTimeout(t);
+  }, [lockedUntil]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -49,8 +62,9 @@ export function StepUpDialog({
   const locked = lockedUntil !== null && Date.now() < lockedUntil;
 
   return (
-    <Dialog open={open}>
-      <DialogContent className="sm:max-w-sm">
+    // Suppress close events: step-up is a gate, no escape/backdrop dismissal.
+    <Dialog open={open} onOpenChange={() => {}}>
+      <DialogContent className="sm:max-w-sm" showCloseButton={false}>
         <DialogHeader>
           <DialogTitle>需要進一步驗證</DialogTitle>
           <DialogDescription>
@@ -71,10 +85,14 @@ export function StepUpDialog({
             autoFocus
             className="w-full rounded border border-neutral-300 px-3 py-2 text-sm"
           />
-          {err && <p className="text-sm text-red-600">{err}</p>}
+          {err && (
+            <p role="alert" className="text-sm text-red-600">
+              {err}
+            </p>
+          )}
           <button
             type="submit"
-            disabled={loading || locked || pw.length === 0}
+            disabled={loading || locked || pw.trim().length === 0}
             className="w-full rounded bg-neutral-900 px-4 py-2 text-sm text-white disabled:opacity-50"
           >
             {loading ? '驗證中…' : '確認'}
