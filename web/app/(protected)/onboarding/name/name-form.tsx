@@ -1,12 +1,14 @@
 'use client';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useSession } from 'next-auth/react';
 
 export function NameForm({ initial, isEdit }: { initial: string; isEdit: boolean }) {
   const [name, setName] = useState(initial);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const router = useRouter();
+  const { update } = useSession();
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -17,8 +19,8 @@ export function NameForm({ initial, isEdit }: { initial: string; isEdit: boolean
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name }),
     });
-    setSaving(false);
     if (!res.ok) {
+      setSaving(false);
       if (res.status === 401) {
         router.push('/login');
         return;
@@ -26,6 +28,11 @@ export function NameForm({ initial, isEdit }: { initial: string; isEdit: boolean
       setErr('儲存失敗，請稍後再試');
       return;
     }
+    // Trigger jwt() callback to re-read displayNameSetAt from DB so proxy.ts
+    // sees the updated claim on the next request. Without this, the proxy
+    // gate would redirect us right back to /onboarding/name in a loop.
+    await update();
+    setSaving(false);
     router.push('/');
   }
 

@@ -24,6 +24,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if (u && u.isActive) {
           token.role = u.role;
           token.userId = u.id;
+          token.displayNameSetAt = u.displayNameSetAt?.toISOString() ?? null;
         } else {
           return {};
         }
@@ -34,6 +35,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (token.userId && token.role) {
         session.user.id = token.userId as string;
         session.user.role = token.role as 'admin' | 'annotator' | 'final_reviewer';
+        session.user.displayNameSetAt = (token.displayNameSetAt as string | null) ?? null;
       }
       return session;
     },

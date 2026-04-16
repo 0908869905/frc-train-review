@@ -1179,39 +1179,59 @@ git commit -m "feat(web): onboarding name form (functional placeholder pre-visua
 
 ### Task 2.3: `proxy.ts` — 未填姓名者自動重導 onboarding
 
+> **Combined with Task 2.4 (single commit):** Implementing 2.3 without 2.4's JWT claim would make the proxy check fail (no `displayNameSetAt` on session). Implementing 2.4 without 2.3 would silently carry the claim with no enforcement. They land together.
+>
+> **Also includes name-form `useSession().update()` fix** (in `web/app/(protected)/onboarding/name/name-form.tsx`): without triggering a JWT refresh after PATCH success, the proxy would redirect back to `/onboarding/name` because the cached JWT still shows `displayNameSetAt: null`. This is plan drift from Task 2.2 but necessary for the end-to-end flow.
+
 > ⚠️ **依賴**：本 task 邏輯需要 session 已有 `displayNameSetAt` 欄位，該欄位由 Task 2.4 的 JWT claim 加入。**建議執行順序：先 2.4 再 2.3**（或兩 task 同一個 session 一起做、合併成一個 commit）。
 
 **Files:**
 - Modify: `web/proxy.ts`
 
-- [ ] **Step 1: 在 proxy.ts 加判斷**
+- [x] **Step 1: 在 proxy.ts 加判斷**
 
-查 `web/proxy.ts`，找 auth check 之後的區塊。加上：
+Final `web/proxy.ts` content (API routes excluded from the onboarding gate so the form's own `PATCH /api/me/display-name` can complete):
 
 ```typescript
-// 已登入但未完成 onboarding → 導去 /onboarding/name
-if (
-  session?.user?.id &&
-  !['/onboarding/name', '/api'].some((p) => req.nextUrl.pathname.startsWith(p))
-) {
-  // 需查 DB：displayNameSetAt 是否為 null
-  // 由於 middleware 跑在 edge，不能用 Prisma → 改走 JWT claim
-  if (session.user.displayNameSetAt == null) {
+import { auth } from '@/lib/auth';
+import { NextResponse } from 'next/server';
+
+export default auth((req) => {
+  const { pathname } = req.nextUrl;
+  const publicPaths = ['/login', '/api/auth'];
+  if (publicPaths.some((p) => pathname.startsWith(p))) return;
+
+  if (!req.auth) {
+    const loginUrl = new URL('/login', req.url);
+    return NextResponse.redirect(loginUrl);
+  }
+
+  // Onboarding gate: user signed in but hasn't set a display name yet.
+  // Edge runtime — can't use Prisma, so we rely on the displayNameSetAt
+  // claim baked into the JWT by the jwt() callback in lib/auth.ts.
+  const onOnboardingPage = pathname.startsWith('/onboarding/name');
+  const onApiRoute = pathname.startsWith('/api');
+  if (
+    !onOnboardingPage &&
+    !onApiRoute &&
+    req.auth.user.displayNameSetAt == null
+  ) {
     return NextResponse.redirect(new URL('/onboarding/name', req.url));
   }
-}
+});
+
+export const config = {
+  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+};
 ```
 
 注意：middleware 在 edge runtime，**不能直接 import prisma**。需要在 `auth.ts` 的 jwt callback 把 `displayNameSetAt` 讀進 token（見 Task 2.4）。
 
-- [ ] **Step 2: 確認 proxy.ts 邏輯（暫先 skip test，等 2.4 整併）**
+- [x] **Step 2: 確認 proxy.ts 邏輯（與 2.4 整併驗證）**
 
-- [ ] **Step 3: Commit（本 task 僅 scaffolding，真正生效要 2.4 完成）**
+- [x] **Step 3: Commit（與 Task 2.4 合併成一個 commit）**
 
-```bash
-git add web/proxy.ts
-git commit -m "chore(web): proxy onboarding redirect scaffolding (needs JWT claim)"
-```
+See Task 2.4 Step 5 for the combined commit.
 
 ---
 
@@ -1221,20 +1241,17 @@ git commit -m "chore(web): proxy onboarding redirect scaffolding (needs JWT clai
 - Modify: `web/lib/auth.ts`
 - Modify: `web/types/next-auth.d.ts`（若無則建立）
 
-- [ ] **Step 1: 擴充 type**
+- [x] **Step 1: 擴充 type**
 
-Check if `web/types/next-auth.d.ts` exists. If not, create:
+`web/types/next-auth.d.ts` already existed (added at M1 with `Role` augmentation). Extend the `Session.user` and `JWT` interfaces with `displayNameSetAt`:
 
 ```typescript
-import 'next-auth';
-import 'next-auth/jwt';
+import { DefaultSession } from 'next-auth';
 
 declare module 'next-auth' {
   interface Session {
-    user: {
+    user: DefaultSession['user'] & {
       id: string;
-      email?: string | null;
-      name?: string | null;
       role: 'admin' | 'annotator' | 'final_reviewer';
       displayNameSetAt: string | null;
     };
@@ -1250,7 +1267,9 @@ declare module 'next-auth/jwt' {
 }
 ```
 
-- [ ] **Step 2: 修 auth.ts jwt + session callback**
+> **Plan amendment (2026-04-16):** `types/next-auth.d.ts` already existed with the earlier `Role` augmentation from M1 — amendment ADDS `displayNameSetAt: string | null` to both the `Session.user` shape and the JWT interface, rather than creating the file from scratch as the plan originally described.
+
+- [x] **Step 2: 修 auth.ts jwt + session callback**
 
 Edit `web/lib/auth.ts`：
 
@@ -1283,16 +1302,25 @@ async session({ session, token }) {
 Run: `pnpm dev`
 清資料庫 `User.displayNameSetAt`（Prisma studio 或 SQL），登入 → 應自動被導到 `/onboarding/name`。填名後應導回 `/`。
 
-- [ ] **Step 4: TypeScript build 驗證**
+> **Deferred to Task 7.2 Playwright E2E** — cannot be exercised from a subagent without a browser. TS compile + existing unit/integration tests are the automated verification for this commit.
+
+- [x] **Step 4: TypeScript build 驗證**
 
 Run: `pnpm build`
-Expected: no type errors。
+Expected: no type errors.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Combined commit (2.3 + 2.4 + name-form fix)**
+
+Also bundles:
+- `web/app/(protected)/onboarding/name/name-form.tsx` — `useSession().update()` after PATCH success to trigger a JWT refresh before navigating away (prevents proxy redirect loop).
+- `web/app/providers.tsx` (new) + `web/app/layout.tsx` — wraps the app in `<SessionProvider>` so `useSession()` is available in client components.
 
 ```bash
-git add web/lib/auth.ts web/types/next-auth.d.ts
-git commit -m "feat(web): jwt claim displayNameSetAt drives onboarding redirect"
+git add web/types/next-auth.d.ts web/lib/auth.ts web/proxy.ts \
+  "web/app/(protected)/onboarding/name/name-form.tsx" \
+  web/app/providers.tsx web/app/layout.tsx \
+  docs/superpowers/plans/2026-04-16-three-interfaces-step-up-auth.md
+git commit -m "feat(web): onboarding gate — JWT claim + proxy redirect + client session refresh"
 ```
 
 ---
