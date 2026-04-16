@@ -9,12 +9,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async signIn({ user }) {
       if (!user.email) return false;
       const wl = await prisma.emailWhitelist.findUnique({ where: { email: user.email } });
-      if (!wl) return false;
+      const role = wl?.role ?? 'annotator';
 
       await prisma.user.upsert({
         where: { email: user.email },
         update: { name: user.name ?? undefined, isActive: true },
-        create: { email: user.email, name: user.name ?? null, role: wl.role },
+        create: { email: user.email, name: user.name ?? null, role },
       });
       return true;
     },
