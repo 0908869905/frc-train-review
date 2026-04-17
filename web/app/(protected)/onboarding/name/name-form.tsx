@@ -1,14 +1,10 @@
 'use client';
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { useSession } from 'next-auth/react';
 
 export function NameForm({ initial, isEdit }: { initial: string; isEdit: boolean }) {
   const [name, setName] = useState(initial);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const router = useRouter();
-  const { update } = useSession();
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -22,26 +18,17 @@ export function NameForm({ initial, isEdit }: { initial: string; isEdit: boolean
     if (!res.ok) {
       setSaving(false);
       if (res.status === 401) {
-        router.push('/login');
+        window.location.href = '/login';
         return;
       }
       setErr('儲存失敗，請稍後再試');
       return;
     }
-    // Trigger jwt() callback to re-read displayNameSetAt from DB so proxy.ts
-    // sees the updated claim on the next request. Without this, the proxy
-    // gate would redirect us right back to /onboarding/name in a loop.
-    // If update() fails, fall back to full-page nav so the server re-reads
-    // the cookie fresh — still escapes the loop without leaving user stuck.
-    try {
-      await update();
-    } catch {
-      setSaving(false);
-      window.location.href = '/';
-      return;
-    }
-    setSaving(false);
-    router.push('/');
+    // Full-page nav so proxy.ts re-runs auth() → jwt callback re-reads
+    // displayNameSetAt from DB and rotates the cookie. useSession().update()
+    // in next-auth v5 beta is unreliable at rotating the JWT cookie, which
+    // caused router.push('/') to bounce back here with stale claim.
+    window.location.href = '/';
   }
 
   return (
