@@ -1,10 +1,16 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Stage, Layer, Rect, Image as KImage, Text, Group } from 'react-konva';
-import type Konva from 'konva';
 import useImage from 'use-image';
+import type Konva from 'konva';
 import type { Box, ClassDef } from './types';
+import {
+  imgToDisp,
+  computeFitView,
+  applyWheelZoom,
+  type Viewport,
+} from './viewport';
 
 type Props = {
   imageUrl: string;
@@ -12,150 +18,179 @@ type Props = {
   activeClassIdx: number;
   boxes: Box[];
   onChange: (boxes: Box[]) => void;
-  width: number;
-  height: number;
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+  readOnly?: boolean;
 };
 
 export function AnnotationCanvas({
   imageUrl,
   classes,
-  activeClassIdx,
   boxes,
-  onChange,
-  width,
-  height,
+  selectedId,
+  readOnly = false,
+  // The following are wired later (Phase 1.2+) — keep in destructure to silence TS.
+  activeClassIdx: _activeClassIdx,
+  onChange: _onChange,
+  onSelect: _onSelect,
 }: Props) {
-  const [img] = useImage(imageUrl);
-  const [drawing, setDrawing] = useState<Box | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  void _activeClassIdx;
+  void _onChange;
+  void _onSelect;
 
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [img] = useImage(imageUrl);
   const natW = img?.naturalWidth ?? 1;
   const natH = img?.naturalHeight ?? 1;
-  const scale = Math.min(width / natW, height / natH);
-  const dispW = natW * scale;
-  const dispH = natH * scale;
 
-  function toNorm(px: number, total: number) {
-    return Math.max(0, Math.min(1, px / total));
+  const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
+  const [vp, setVp] = useState<Viewport>({ zoom: 1, pan: { x: 0, y: 0 } });
+
+  // Track container size via ResizeObserver.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) {
+        const { width, height } = e.contentRect;
+        setContainerSize({ w: Math.floor(width), h: Math.floor(height) });
+      }
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Fit view whenever image loads, image URL changes, or container resizes.
+  useEffect(() => {
+    if (!img || containerSize.w === 0 || containerSize.h === 0) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setVp(computeFitView(natW, natH, containerSize.w, containerSize.h));
+  }, [img, natW, natH, containerSize.w, containerSize.h, imageUrl]);
+
+  // `f` key → fit view.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'f' && e.key !== 'F') return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (!img || containerSize.w === 0 || containerSize.h === 0) return;
+      setVp(computeFitView(natW, natH, containerSize.w, containerSize.h));
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [img, natW, natH, containerSize.w, containerSize.h]);
+
+  // Wheel zoom (cursor-centered).
+  function handleWheel(e: Konva.KonvaEventObject<WheelEvent>) {
+    e.evt.preventDefault();
+    const stage = e.target.getStage();
+    const p = stage?.getPointerPosition();
+    if (!p) return;
+    const delta = e.evt.deltaY < 0 ? +1 : -1;
+    setVp((cur) => applyWheelZoom(cur, p.x, p.y, delta));
   }
 
+  // Middle-click + right-click pan. Tracked via Stage listener + internal ref.
+  const panState = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
+
   function handleMouseDown(e: Konva.KonvaEventObject<MouseEvent>) {
-    if (drawing) return;
-    const pos = e.target.getStage()?.getPointerPosition();
-    if (!pos) return;
-    setDrawing({
-      id: crypto.randomUUID(),
-      classIdx: activeClassIdx,
-      x: toNorm(pos.x, dispW),
-      y: toNorm(pos.y, dispH),
-      w: 0,
-      h: 0,
-      source: 'human',
-    });
-    setSelectedId(null);
+    if (e.evt.button === 1 || e.evt.button === 2) {
+      e.evt.preventDefault();
+      panState.current = {
+        startX: e.evt.clientX,
+        startY: e.evt.clientY,
+        panX: vp.pan.x,
+        panY: vp.pan.y,
+      };
+    }
+    // Left-click interactions are Phase 1.2+.
   }
 
   function handleMouseMove(e: Konva.KonvaEventObject<MouseEvent>) {
-    if (!drawing) return;
-    const pos = e.target.getStage()?.getPointerPosition();
-    if (!pos) return;
-    const nx = toNorm(pos.x, dispW);
-    const ny = toNorm(pos.y, dispH);
-    setDrawing({ ...drawing, w: nx - drawing.x, h: ny - drawing.y });
+    if (!panState.current) return;
+    const dx = e.evt.clientX - panState.current.startX;
+    const dy = e.evt.clientY - panState.current.startY;
+    setVp((cur) => ({
+      ...cur,
+      pan: { x: panState.current!.panX + dx, y: panState.current!.panY + dy },
+    }));
   }
 
   function handleMouseUp() {
-    if (!drawing) return;
-    const cx = drawing.x + drawing.w / 2;
-    const cy = drawing.y + drawing.h / 2;
-    const aw = Math.abs(drawing.w);
-    const ah = Math.abs(drawing.h);
-    if (aw < 0.01 || ah < 0.01) {
-      setDrawing(null);
-      return;
-    }
-    const normalized: Box = {
-      ...drawing,
-      x: cx,
-      y: cy,
-      w: aw,
-      h: ah,
-      source: 'human',
-    };
-    onChange([...boxes, normalized]);
-    setDrawing(null);
+    panState.current = null;
   }
+
+  // Suppress browser context menu so right-click pan works.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const h = (e: MouseEvent) => e.preventDefault();
+    el.addEventListener('contextmenu', h);
+    return () => el.removeEventListener('contextmenu', h);
+  }, []);
 
   function classColor(idx: number) {
     return classes[idx]?.color ?? '#888';
   }
 
   function renderBox(box: Box) {
-    const bx = (box.x - box.w / 2) * dispW;
-    const by = (box.y - box.h / 2) * dispH;
-    const bw = box.w * dispW;
-    const bh = box.h * dispH;
-    const isSelected = selectedId === box.id;
+    const bx = (box.x - box.w / 2) * natW;
+    const by = (box.y - box.h / 2) * natH;
+    const bw = box.w * natW;
+    const bh = box.h * natH;
+    const tl = imgToDisp(bx, by, vp);
+    const dispW = bw * vp.zoom;
+    const dispH = bh * vp.zoom;
+    const isSel = selectedId === box.id;
     return (
-      <Group key={box.id} onClick={() => setSelectedId(box.id)}>
+      <Group key={box.id}>
         <Rect
-          x={bx}
-          y={by}
-          width={bw}
-          height={bh}
+          x={tl.x}
+          y={tl.y}
+          width={dispW}
+          height={dispH}
           stroke={classColor(box.classIdx)}
-          strokeWidth={isSelected ? 3 : 2}
+          strokeWidth={isSel ? 3 : 2}
           dash={box.source === 'gemini' ? [6, 4] : undefined}
         />
         <Text
-          x={bx}
-          y={by - 14}
+          x={tl.x}
+          y={tl.y - 14}
           text={`${classes[box.classIdx]?.name ?? '?'}${box.source === 'gemini' ? ' (AI)' : ''}`}
           fontSize={11}
+          fontStyle={isSel ? 'bold' : 'normal'}
           fill={classColor(box.classIdx)}
         />
       </Group>
     );
   }
 
-  function deleteSelected() {
-    if (!selectedId) return;
-    onChange(boxes.filter((b) => b.id !== selectedId));
-    setSelectedId(null);
-  }
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Delete' || e.key === 'Backspace') deleteSelected();
-    };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, boxes]);
+  // Image render rect in display coords.
+  const imgTL = imgToDisp(0, 0, vp);
+  const imgDispW = natW * vp.zoom;
+  const imgDispH = natH * vp.zoom;
 
   return (
-    <Stage
-      width={width}
-      height={height}
-      onMouseDown={handleMouseDown}
-      onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp}
+    <div
+      ref={containerRef}
+      className="w-full h-full relative"
+      style={{ cursor: readOnly ? 'grab' : 'default' }}
     >
-      <Layer>
-        {img && <KImage image={img} width={dispW} height={dispH} />}
-        {boxes.map(renderBox)}
-        {drawing && (
-          <Rect
-            x={drawing.x * dispW}
-            y={drawing.y * dispH}
-            width={drawing.w * dispW}
-            height={drawing.h * dispH}
-            stroke={classColor(drawing.classIdx)}
-            strokeWidth={2}
-            dash={[4, 2]}
-          />
-        )}
-      </Layer>
-    </Stage>
+      <Stage
+        width={containerSize.w}
+        height={containerSize.h}
+        onWheel={handleWheel}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+      >
+        <Layer>
+          {img && (
+            <KImage image={img} x={imgTL.x} y={imgTL.y} width={imgDispW} height={imgDispH} />
+          )}
+          {boxes.map(renderBox)}
+        </Layer>
+      </Stage>
+    </div>
   );
 }

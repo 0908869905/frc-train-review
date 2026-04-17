@@ -100,15 +100,16 @@ export function ReviewTray({
         </span>
         <span>Space approve · R reject</span>
       </header>
-      <div className="flex-1 flex items-center justify-center bg-gray-50">
+      <div className="flex-1 flex bg-gray-50">
         <AnnotationCanvas
           imageUrl={current.imageUrl}
           classes={classes}
           activeClassIdx={0}
           boxes={current.boxes}
           onChange={() => {}}
-          width={900}
-          height={600}
+          selectedId={null}
+          onSelect={() => {}}
+          readOnly
         />
       </div>
       <footer className="px-4 py-3 border-t flex gap-2 justify-end">

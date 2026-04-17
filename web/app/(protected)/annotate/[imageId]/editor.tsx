@@ -30,6 +30,7 @@ export function Editor(p: Props) {
   const router = useRouter();
   const [boxes, setBoxes] = useState<Box[]>(p.initialBoxes);
   const [activeIdx, setActiveIdx] = useState(0);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState(p.initialUpdatedAt);
   const [status, setStatus] = useState('saved');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -84,26 +85,22 @@ export function Editor(p: Props) {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // Ignore if user is typing in an input/textarea
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
       const key = e.key.toLowerCase();
 
-      // Submit takes priority — if user bound 's' to a class, we still submit.
       if (key === 's') {
         submit();
         return;
       }
 
-      // Letter shortcut
       const matchByShortcut = p.classes.findIndex((c) => c.shortcut === key);
       if (matchByShortcut >= 0) {
         setActiveIdx(matchByShortcut);
         return;
       }
 
-      // Numeric fallback
       if (key >= '1' && key <= '9') {
         const idx = parseInt(key, 10) - 1;
         if (idx < p.classes.length) setActiveIdx(idx);
@@ -150,18 +147,18 @@ export function Editor(p: Props) {
             {p.queueIds.length}
           </span>
           <span>
-            drag to draw · Del delete · 1-9 / letters class · S submit
+            wheel zoom · mid/right drag pan · f fit · 1-9 / letters class · S submit
           </span>
         </header>
-        <div className="flex-1 flex items-center justify-center bg-gray-50">
+        <div className="flex-1 flex bg-gray-50">
           <AnnotationCanvas
             imageUrl={p.imageUrl}
             classes={p.classes}
             activeClassIdx={activeIdx}
             boxes={boxes}
             onChange={setBoxes}
-            width={800}
-            height={600}
+            selectedId={selectedId}
+            onSelect={setSelectedId}
           />
         </div>
         <footer className="px-4 py-2 border-t flex justify-between items-center text-xs">
