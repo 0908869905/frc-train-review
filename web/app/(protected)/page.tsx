@@ -5,6 +5,8 @@ import { getSession } from '@/lib/session';
 export default async function Dashboard() {
   const session = await getSession();
   if (!session) return null;
+  const role = session.user?.role;
+  const canSeeProjects = role === 'admin' || role === 'final_reviewer';
 
   const queue = await prisma.image.findMany({
     where: {
@@ -59,11 +61,13 @@ export default async function Dashboard() {
         </section>
       )}
 
-      <section>
-        <Link href="/projects" className="underline text-sm">
-          All projects
-        </Link>
-      </section>
+      {canSeeProjects && (
+        <section>
+          <Link href="/projects" className="underline text-sm">
+            All projects
+          </Link>
+        </section>
+      )}
     </main>
   );
 }
