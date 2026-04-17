@@ -12,8 +12,18 @@ import {
   applyWheelZoom,
   type Viewport,
 } from './viewport';
-import { hitTestBox } from './hit-test';
-import { clampMoveNorm, commitDraw } from './editor-actions';
+import {
+  clampMoveNorm,
+  commitDraw,
+  commitResize,
+} from './editor-actions';
+import {
+  hitTestBox,
+  hitTestHandle,
+  boxToImgRect,
+  HANDLE_CURSORS,
+  type HandleIndex,
+} from './hit-test';
 
 type Props = {
   imageUrl: string;
@@ -94,7 +104,14 @@ export function AnnotationCanvas({
   type DragAction =
     | null
     | { kind: 'move'; id: string; startImgX: number; startImgY: number; orig: Box }
-    | { kind: 'draw'; startImgX: number; startImgY: number; curImgX: number; curImgY: number };
+    | { kind: 'draw'; startImgX: number; startImgY: number; curImgX: number; curImgY: number }
+    | {
+        kind: 'resize';
+        id: string;
+        handle: HandleIndex;
+        orig: Box;
+        curRect: { x1: number; y1: number; x2: number; y2: number };
+      };
 
   const dragState = useRef<DragAction>(null);
   const [drawPreview, setDrawPreview] = useState<{
@@ -132,7 +149,21 @@ export function AnnotationCanvas({
     const p = stage?.getPointerPosition();
     if (!p) return;
 
-    // Priority: handle > box > empty. Handle-hit is added in Task 1.3.
+    // Handle hit only when a box is already selected. Priority: handle > box > empty.
+    const selectedBox = selectedId ? boxes.find((b) => b.id === selectedId) ?? null : null;
+    const handleIdx = hitTestHandle(p.x, p.y, selectedBox, natW, natH, vp);
+    if (handleIdx !== -1 && selectedBox) {
+      const origRect = boxToImgRect(selectedBox, natW, natH);
+      dragState.current = {
+        kind: 'resize',
+        id: selectedBox.id,
+        handle: handleIdx,
+        orig: selectedBox,
+        curRect: origRect,
+      };
+      return;
+    }
+
     const hitId = hitTestBox(p.x, p.y, boxes, natW, natH, vp);
     if (hitId) {
       onSelect(hitId);
@@ -199,6 +230,24 @@ export function AnnotationCanvas({
         x2: ix,
         y2: iy,
       });
+    } else if (dragState.current.kind === 'resize') {
+      const s = dragState.current;
+      const orig = boxToImgRect(s.orig, natW, natH);
+      let { x1, y1, x2, y2 } = orig;
+      // Handle layout:
+      // 0 TL   1 TC   2 TR
+      // 3 ML          4 MR
+      // 5 BL   6 BC   7 BR
+      if (s.handle === 0 || s.handle === 3 || s.handle === 5) x1 = ix;
+      if (s.handle === 2 || s.handle === 4 || s.handle === 7) x2 = ix;
+      if (s.handle === 0 || s.handle === 1 || s.handle === 2) y1 = iy;
+      if (s.handle === 5 || s.handle === 6 || s.handle === 7) y2 = iy;
+
+      s.curRect = { x1, y1, x2, y2 };
+      const committed = commitResize(s.orig, { x1, y1, x2, y2 }, natW, natH);
+      if (committed) {
+        onChange(boxes.map((b) => (b.id === s.id ? committed : b)));
+      }
     }
   }
 
@@ -242,6 +291,7 @@ export function AnnotationCanvas({
       onChange([...boxes, newBox]);
       onSelect(newBox.id);
     }
+    // resize: already committed live in handleMouseMove; nothing to do.
   }
 
   // Suppress browser context menu so right-click pan works.
@@ -278,6 +328,28 @@ export function AnnotationCanvas({
     return classes[idx]?.color ?? '#888';
   }
 
+  function renderHandles(x: number, y: number, w: number, h: number, color: string) {
+    const HS = 5; // half-size in px for rendering
+    const positions: Array<[number, number]> = [
+      [x, y], [x + w / 2, y], [x + w, y],
+      [x, y + h / 2],          [x + w, y + h / 2],
+      [x, y + h], [x + w / 2, y + h], [x + w, y + h],
+    ];
+    return positions.map(([hx, hy], i) => (
+      <Rect
+        key={i}
+        x={hx - HS}
+        y={hy - HS}
+        width={HS * 2}
+        height={HS * 2}
+        fill="white"
+        stroke={color}
+        strokeWidth={1}
+        listening={false}
+      />
+    ));
+  }
+
   function renderBox(box: Box) {
     const bx = (box.x - box.w / 2) * natW;
     const by = (box.y - box.h / 2) * natH;
@@ -287,6 +359,7 @@ export function AnnotationCanvas({
     const dispW = bw * vp.zoom;
     const dispH = bh * vp.zoom;
     const isSel = selectedId === box.id;
+    const color = classColor(box.classIdx);
     return (
       <Group key={box.id}>
         <Rect
@@ -294,7 +367,7 @@ export function AnnotationCanvas({
           y={tl.y}
           width={dispW}
           height={dispH}
-          stroke={classColor(box.classIdx)}
+          stroke={color}
           strokeWidth={isSel ? 3 : 2}
           dash={box.source === 'gemini' ? [6, 4] : undefined}
         />
@@ -304,8 +377,9 @@ export function AnnotationCanvas({
           text={`${classes[box.classIdx]?.name ?? '?'}${box.source === 'gemini' ? ' (AI)' : ''}`}
           fontSize={11}
           fontStyle={isSel ? 'bold' : 'normal'}
-          fill={classColor(box.classIdx)}
+          fill={color}
         />
+        {isSel && !readOnly && renderHandles(tl.x, tl.y, dispW, dispH, color)}
       </Group>
     );
   }
@@ -316,6 +390,7 @@ export function AnnotationCanvas({
   const imgDispH = natH * vp.zoom;
 
   const [hoverBoxId, setHoverBoxId] = useState<string | null>(null);
+  const [hoverHandleIdx, setHoverHandleIdx] = useState<HandleIndex | -1>(-1);
 
   function handleMouseMoveForHover(e: Konva.KonvaEventObject<MouseEvent>) {
     handleMouseMove(e);
@@ -323,6 +398,14 @@ export function AnnotationCanvas({
     const stage = e.target.getStage();
     const p = stage?.getPointerPosition();
     if (!p) return;
+    const selectedBox = selectedId ? boxes.find((b) => b.id === selectedId) ?? null : null;
+    const h = hitTestHandle(p.x, p.y, selectedBox, natW, natH, vp);
+    if (h !== -1) {
+      setHoverHandleIdx(h);
+      setHoverBoxId(null);
+      return;
+    }
+    setHoverHandleIdx(-1);
     const id = hitTestBox(p.x, p.y, boxes, natW, natH, vp);
     setHoverBoxId(id);
   }
@@ -333,11 +416,13 @@ export function AnnotationCanvas({
       : 'grab'
     : isPanning
       ? 'grabbing'
-      : isDrawing
-        ? 'crosshair'
-        : hoverBoxId
-          ? 'move'
-          : 'crosshair';
+      : hoverHandleIdx !== -1
+        ? HANDLE_CURSORS[hoverHandleIdx]
+        : isDrawing
+          ? 'crosshair'
+          : hoverBoxId
+            ? 'move'
+            : 'crosshair';
 
   return (
     <div
