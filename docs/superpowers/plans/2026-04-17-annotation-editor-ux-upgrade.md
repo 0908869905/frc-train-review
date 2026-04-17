@@ -123,11 +123,11 @@ describe('computeFitView', () => {
   });
 
   it('fits image within container preserving aspect ratio', () => {
-    // 1920x1080 image in 800x600 container: limit is height (600/1080)
+    // 1920x1080 image in 800x600 container: limit is width (800/1920 = 0.417 < 600/1080 = 0.556)
     const vp = computeFitView(1920, 1080, 800, 600);
-    expect(vp.zoom).toBeCloseTo(600 / 1080, 6);
-    expect(vp.pan.x).toBeCloseTo((800 - 1920 * vp.zoom) / 2, 6);
-    expect(vp.pan.y).toBeCloseTo(0, 6); // centered; height exactly fills
+    expect(vp.zoom).toBeCloseTo(800 / 1920, 6);
+    expect(vp.pan.x).toBeCloseTo(0, 6); // width exactly fills
+    expect(vp.pan.y).toBeCloseTo((600 - 1080 * vp.zoom) / 2, 6);
   });
 
   it('handles container smaller than image (shrink)', () => {
@@ -279,7 +279,7 @@ const natW = 1000;
 const natH = 500;
 const vp: Viewport = { zoom: 1, pan: { x: 0, y: 0 } };
 
-// A box centered at (0.5, 0.5) with size 0.2 x 0.4 → image rect (400, 100)→(600, 300)
+// A box centered at (0.5, 0.5) with size 0.2 x 0.4 → image rect (400, 150)→(600, 350) on 1000x500
 const box1: Box = {
   id: 'a',
   classIdx: 0,
@@ -305,9 +305,9 @@ describe('boxToImgRect', () => {
   it('converts normalized box to image-pixel corners', () => {
     expect(boxToImgRect(box1, natW, natH)).toEqual({
       x1: 400,
-      y1: 100,
+      y1: 150,
       x2: 600,
-      y2: 300,
+      y2: 350,
     });
   });
 });
@@ -319,8 +319,7 @@ describe('hitTestBox', () => {
   });
 
   it('prefers later boxes in array (top-most z-order)', () => {
-    // Both boxes cover (100, 50) when we inflate box2 coverage? box2 only covers (50-150, 25-75)
-    // box1 covers (400-600, 100-300). Put them overlapping — use a different box:
+    // box2 covers (50-150, 25-75). Build an overlapping box that also covers (100, 50):
     const boxOver: Box = { ...box1, id: 'over', x: 0.1, y: 0.1, w: 0.2, h: 0.2 };
     // boxOver covers roughly (0, 0)-(200, 100). box2 covers (50, 25)-(150, 75). Both include (100, 50).
     expect(hitTestBox(100, 50, [boxOver, box2], natW, natH, vp)).toBe('b');
@@ -338,27 +337,29 @@ describe('hitTestHandle', () => {
   });
 
   it('detects TL corner (handle 0) of selected box', () => {
-    // box1 image rect TL = (400, 100) → display same (zoom=1 pan=0)
-    expect(hitTestHandle(400, 100, box1, natW, natH, vp)).toBe(0);
+    // box1 image rect TL = (400, 150) → display same (zoom=1 pan=0)
+    expect(hitTestHandle(400, 150, box1, natW, natH, vp)).toBe(0);
   });
 
   it('detects MR handle (4) — right-middle', () => {
-    expect(hitTestHandle(600, 200, box1, natW, natH, vp)).toBe(4);
+    // box1 MR = (600, 250) at vertical center of y∈[150,350]
+    expect(hitTestHandle(600, 250, box1, natW, natH, vp)).toBe(4);
   });
 
   it('detects BR handle (7) — bottom-right', () => {
-    expect(hitTestHandle(600, 300, box1, natW, natH, vp)).toBe(7);
+    expect(hitTestHandle(600, 350, box1, natW, natH, vp)).toBe(7);
   });
 
   it('returns -1 when far from any handle', () => {
+    // (500, 200): inside box rect, but TC=(500,150) is 50 px away — far
     expect(hitTestHandle(500, 200, box1, natW, natH, vp)).toBe(-1);
   });
 
   it('respects hit radius (9 px default)', () => {
-    // 8px offset from TL → hit
-    expect(hitTestHandle(408, 108, box1, natW, natH, vp)).toBe(0);
+    // 8px offset from TL (400,150) → hit
+    expect(hitTestHandle(408, 158, box1, natW, natH, vp)).toBe(0);
     // 10px offset from TL → miss
-    expect(hitTestHandle(410, 110, box1, natW, natH, vp)).toBe(-1);
+    expect(hitTestHandle(410, 160, box1, natW, natH, vp)).toBe(-1);
   });
 });
 
