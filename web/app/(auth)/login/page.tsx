@@ -8,7 +8,7 @@ export default function LoginPage() {
         <div>
           <h1 className="text-2xl font-bold">FRC Annotation Review</h1>
           <p className="text-sm text-gray-500">
-            Team members only. Google account must be on the whitelist.
+            使用 Google 帳號登入。覆核 / 管理員功能另需輸入密碼。
           </p>
         </div>
         <form

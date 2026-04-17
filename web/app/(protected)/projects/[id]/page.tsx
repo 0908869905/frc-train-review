@@ -2,6 +2,13 @@ import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { notFound } from 'next/navigation';
 import { Button } from '@/components/ui/button';
+import type { BatchState } from '@prisma/client';
+
+function batchHref(projectId: string, batchId: string, state: BatchState) {
+  if (state === 'under_review') return `/review/${batchId}`;
+  if (state === 'completed') return `/projects/${projectId}/export`;
+  return `/projects/${projectId}/batches/${batchId}/assign`;
+}
 
 export default async function ProjectHome({
   params,
@@ -25,11 +32,25 @@ export default async function ProjectHome({
     },
   });
 
+  const approvedCount = await prisma.image.count({
+    where: { batch: { projectId: id }, state: 'approved' },
+  });
+
   return (
     <main className="p-8">
-      <h1 className="text-2xl font-bold mb-2">{p.name}</h1>
-      <p className="text-sm text-gray-500 mb-6">{p.description ?? '—'}</p>
-      <section className="mb-8">
+      <div className="flex items-start justify-between mb-2">
+        <div>
+          <h1 className="text-2xl font-bold">{p.name}</h1>
+          <p className="text-sm text-gray-500">{p.description ?? '—'}</p>
+        </div>
+        <Link href={`/projects/${id}/export`}>
+          <Button variant="outline">
+            Export YOLO zip ({approvedCount})
+          </Button>
+        </Link>
+      </div>
+
+      <section className="mb-8 mt-6">
         <h2 className="text-lg font-semibold mb-2">
           Classes ({classes.length})
         </h2>
@@ -48,6 +69,7 @@ export default async function ProjectHome({
           ))}
         </div>
       </section>
+
       <section>
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-lg font-semibold">Batches</h2>
@@ -66,7 +88,7 @@ export default async function ProjectHome({
               >
                 <div>
                   <Link
-                    href={`/projects/${id}/batches/${b.id}/assign`}
+                    href={batchHref(id, b.id, b.state)}
                     className="text-sm font-medium underline"
                   >
                     {b.name}
