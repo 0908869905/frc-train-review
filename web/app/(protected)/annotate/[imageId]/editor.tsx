@@ -281,8 +281,10 @@ export function Editor(p: Props) {
             {p.projectName} / {p.batchName} / {currentIdx + 1} of{' '}
             {p.queueIds.length}
           </span>
-          <span>
-            wheel zoom · mid/right drag pan · f fit · 1-9 / letters class · S submit
+          <span className="text-right">
+            drag: empty→draw · box→move · handle→resize ·
+            wheel zoom · mid/right drag pan · f fit ·
+            ←/→ nav · 1-9/letters class · Del · Ctrl+Z · Esc · S submit
           </span>
         </header>
         <div className="flex-1 flex bg-gray-50">
