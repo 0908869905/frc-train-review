@@ -1,5 +1,7 @@
+import Link from 'next/link';
 import { prisma } from '@/lib/db';
 import { notFound } from 'next/navigation';
+import { Button } from '@/components/ui/button';
 
 export default async function ProjectHome({
   params,
@@ -14,6 +16,14 @@ export default async function ProjectHome({
     name: string;
     color: string;
   }>;
+
+  const batches = await prisma.batch.findMany({
+    where: { projectId: id },
+    orderBy: { createdAt: 'desc' },
+    include: {
+      _count: { select: { images: true } },
+    },
+  });
 
   return (
     <main className="p-8">
@@ -39,10 +49,39 @@ export default async function ProjectHome({
         </div>
       </section>
       <section>
-        <h2 className="text-lg font-semibold mb-2">Batches</h2>
-        <p className="text-sm text-gray-400">
-          No batches yet — M3 will add upload.
-        </p>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-lg font-semibold">Batches</h2>
+          <Link href={`/projects/${id}/upload`}>
+            <Button>New batch</Button>
+          </Link>
+        </div>
+        {batches.length === 0 ? (
+          <p className="text-sm text-gray-400">No batches yet.</p>
+        ) : (
+          <ul className="divide-y divide-neutral-200 border rounded-md">
+            {batches.map((b) => (
+              <li
+                key={b.id}
+                className="flex items-center justify-between px-4 py-3"
+              >
+                <div>
+                  <Link
+                    href={`/projects/${id}/batches/${b.id}/assign`}
+                    className="text-sm font-medium underline"
+                  >
+                    {b.name}
+                  </Link>
+                  <div className="text-xs text-neutral-500">
+                    {b.state} · {b._count.images} images
+                  </div>
+                </div>
+                <span className="text-xs text-neutral-400">
+                  {b.createdAt.toISOString().slice(0, 10)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
     </main>
   );

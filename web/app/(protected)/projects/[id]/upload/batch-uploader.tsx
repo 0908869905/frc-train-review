@@ -47,7 +47,11 @@ export function BatchUploader({ projectId }: { projectId: string }) {
         body: JSON.stringify({ zipUrl: blob.url }),
       });
       if (!finRes.ok) {
-        throw new Error('finalize failed: ' + (await finRes.text()));
+        const detail = await finRes
+          .json()
+          .then((j) => j.error ?? JSON.stringify(j))
+          .catch(() => finRes.text().catch(() => ''));
+        throw new Error(`finalize failed (${finRes.status}): ${detail}`);
       }
 
       setStatus('Done');
