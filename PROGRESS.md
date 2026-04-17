@@ -1,5 +1,121 @@
 # frc-train-review - 進度追蹤
 
+## Session: 2026-04-17 (第 5 次)
+
+### 主題
+執行前一個 session 寫的 Annotation Editor UX Upgrade plan — 把 Python 桌面版 `label_editor.py` 的 UX 整套搬到 web annotator 頁。14 個 task 全部完成 + 3 個 fix commits(code reviewer 抓到的 latent bugs) + 1 個 docs commit。Production 已 push master 觸發 Vercel auto-deploy。
+
+### 執行模式
+**Subagent-Driven Development**（`superpowers:subagent-driven-development` skill）。14 個 task plan,每個 task 派 implementer + spec review + code quality review。
+
+### 完成項目
+
+**Phase 0 — 4 個 pure helper modules（TDD,42 個新 unit tests）**
+- [x] Task 0.1 `web/components/annotation/viewport.ts` — `imgToDisp` / `dispToImg` / `computeFitView` / `applyWheelZoom`(cursor-centered zoom,1.15× factor,[0.1, 10] bounds,3× fit cap)+ 10 tests
+- [x] Task 0.2 `web/components/annotation/hit-test.ts` — `boxToImgRect` / `hitTestBox`(top-most z-order 優先)/ `hitTestHandle`(9 px 預設命中半徑)/ `HANDLE_CURSORS`(8 個方向性 cursor 字串)+ 11 tests
+- [x] Task 0.3 `web/components/annotation/undo.ts` — `pushUndo<T>`(cap 50 預設,不可變)/ `popUndo<T>` + 7 tests
+- [x] Task 0.4 `web/components/annotation/editor-actions.ts` — `changeSelectedClass` / `deleteSelected` / `clampMoveNorm` / `commitResize`(reverse-flip support,<5px reject)/ `commitDraw`(<0.005 norm reject,fresh UUID)+ 14 tests
+
+**Phase 1 — AnnotationCanvas.tsx 完全重寫**
+- [x] Task 1.1 ResizeObserver-responsive Konva Stage + viewport state(zoom/pan)+ fit-view on image load/URL change/container resize/`f` key + wheel zoom(cursor-centered,invert `-deltaY`)+ middle/right-click pan(`preventDefault` contextmenu)+ `readOnly` prop + `selectedId`/`onSelect` controlled props
+- [x] Task 1.2 Modeless 互動 — `DragAction` tagged union(null | move | draw)+ hit-test priority(handle > box > empty,handle 待 1.3)+ drag move with `clampMoveNorm` + drag draw → commit via `commitDraw`(<5 px 視為 click → deselect)+ `drawPreview` 黃色虛線 + `hoverBoxId` state + cursor 反饋(mirror state `isPanning`/`isDrawing`,因為 React 19 `react-hooks/refs` 不允許 render 時 read refs)
+- [x] Task 1.3 8-handle resize — 擴展 `DragAction` 加 `resize` variant + handle-hit 優先於 box-hit + resize 邏輯(handle 0=TL..7=BR)+ `renderHandles`(白填色 + class color 邊,`listening={false}`)+ `hoverHandleIdx` state + `HANDLE_CURSORS[idx]` cursor
+- [x] Task 1.4 Esc 取消 in-progress draw + readOnly 驗證(無程式碼變更,readOnly 已由 1.2 實作)
+
+**Phase 2 — editor.tsx 整合**
+- [x] Task 2.1 **大改動** — Editor 擁有 `selectedId`、`undoStack`、`onBoxesChange` wrapper(pushUndo 舊 boxes 到 stack 再 setBoxes);image-id 變更時清空 stack + selection;**Canvas refactor 為 shadowBox pattern** — `onChange` 只在 mouseup 觸發(不再每 mousemove frame 觸發),蛇行 `shadowBox` state 提供 live drag 預覽;Esc + window-mouseup 清理也補上 `setShadowBox(null)`;editor 新增 keyboard handlers:Ctrl+Z(`popUndo` + `setBoxes` + 清選擇)、Del/Backspace(`deleteSelected` via `onBoxesChange`)、Esc(清選擇)
+- [x] Task 2.2 Class shortcut 雙重作用 — 有 selected → `onBoxesChange(changeSelectedClass(boxes, selectedId, matchByShortcut))`;同時 `setActiveIdx`;letter + numeric fallback 都有雙重作用
+- [x] Task 2.3 **flush-save 架構** — 拆 debounce useEffect:新增 `boxesRef`/`updatedAtRef`(ref 確保 `doSave` 讀最新值、不受閉包影響)、`doSave` useCallback、2s debounce useEffect、`flushSave`(清 pending timer + await doSave)、`submit`(flush 再 POST submit)、unmount flush useEffect(fire-and-forget);`prevId` 同 `nextId` 一起宣告;新 arrow-nav useEffect:←/→ 先 `flushSave()`,失敗則 stay、成功則 router.push
+- [x] Task 2.4 Header hint 文字更新(`drag: empty→draw · box→move · handle→resize · wheel zoom · mid/right drag pan · f fit · ←/→ nav · 1-9/letters class · Del · Ctrl+Z · Esc · S submit`)
+
+**Phase 3 — Review tray**
+- [x] Task 3.1 Review tray readOnly — 已由 Task 1.1 完成(passes `readOnly`、`selectedId={null}`、`onSelect={() => {}}`;wrapper div 從 `items-center justify-center` 改 `flex` 讓 canvas 填滿);僅驗證,無新改動
+
+**Phase 4 — Final validation**
+- [x] Task 4.1 最終驗證(build + lint + 88/88 tests 全綠)+ 派最終 code reviewer + fast-forward merge + push
+
+**非計畫內的 3 個 fix commits(code reviewer 抓到的 latent bugs)**
+- [x] `e65196b` fix(web): clean up drag state on window mouseup + mid-drag pan — 補 window-level mouseup handler(使用者拖曳到 canvas 外釋放也會清空 drag state;middle-click 在 left-drag 中啟動 pan 時先 abort 左邊 drag)
+- [x] `9b775ea` fix(web): resolve react-hooks lint errors on drag state mutations — Task 1.4 的 Esc useEffect 位置原本在 state 宣告之前,導致 `react-hooks/immutability` 規則誤判 dragState mutations;移到 state 宣告之後,規則就不再 fire 了
+- [x] `cb67386` fix(web): save-race data loss + undo ref-based state — 最終 reviewer 抓到 C1 critical:`doSave` 在 in-flight 時直接 return true 可能導致「user 編輯 A → 2s save 中 → user 編輯 B → 按 → → flushSave 以為成功 → navigate → B 遺失」。改為 `inFlightSave` promise coalescing:先 await 舊的 save 再 fire 新的 save(用最新 boxes);也順便修 I1(unused `undoStack` 綁定,改成 `useRef`)+ I2(`setUndoStack` updater 裡的副作用違反 React 19 reducer purity,改成 ref-based 讀寫)
+
+**1 個 docs commit**
+- [x] `622fd94` docs: correct box1 y-coord math in Task 0.1/0.2 test specs — plan 裡原本 box1 (y=0.5, h=0.4, natH=500) 誤寫成 y1=100/y2=300,正確應是 y1=150/y2=350。subagent implementers 發現並修正 test,我再補 plan doc 的 math
+
+### 核心設計決策(供未來 session 快速 recall)
+1. **Canvas owns viewport + drag, Editor owns undo + save**:責任分離清楚。Canvas 透過 `onChange(newBoxes)` + `selectedId`/`onSelect` controlled 與 Editor 通信
+2. **shadowBox pattern**:drag 中 Canvas 不 fire onChange,commit-on-release 後才 fire。Esc/window-mouseup 清 shadowBox → drag 中被 undo 會自動還原
+3. **undoStackRef 而非 useState**:undo stack 不驅動 UI,只在 event handlers 間共享 → 用 ref 更純,避開 React 19 reducer purity 問題
+4. **inFlightSave promise coalescing**:避免 rapid ←/→/S 時的 silent data loss
+5. **React 19 effect 宣告順序**:新 useEffect 必須放在它讀的 refs/state 之後,否則 lint 會誤判 ref mutations 為「modifying value used in effect」
+6. **Class shortcut 雙重作用**:有 selected → 改 class + set active;無 selected → 只 set active。省「畫完再按一次 class key」那一步
+7. **Mirror state (`isPanning`/`isDrawing`)**:React 19 `react-hooks/refs` 禁止 render 時 read refs,所以 cursor 邏輯用 state booleans 鏡射 refs,而非直接 `panState.current ? 'grabbing' : 'grab'`
+
+### 修改檔案
+- `web/components/annotation/viewport.ts`(新增,zoom/pan/fit helpers)
+- `web/components/annotation/hit-test.ts`(新增,box + 8 handles hit-test helpers)
+- `web/components/annotation/undo.ts`(新增,undo stack helpers)
+- `web/components/annotation/editor-actions.ts`(新增,class/delete/clamp/resize/draw helpers)
+- `web/components/annotation/AnnotationCanvas.tsx`(完全重寫,加 viewport + modeless 互動 + 8-handle resize + readOnly + shadowBox pattern)
+- `web/app/(protected)/annotate/[imageId]/editor.tsx`(大改,undo stack + Del + Ctrl+Z + Esc + class shortcut dual action + flush-save + ←/→ nav + submit flush)
+- `web/app/(protected)/review/[batchId]/review-tray.tsx`(加 readOnly prop)
+- `docs/superpowers/plans/2026-04-17-annotation-editor-ux-upgrade.md`(新增,implementation plan)
+- `web/tests/unit/annotation/viewport.test.ts` + `hit-test.test.ts` + `undo.test.ts` + `editor-actions.test.ts`(新增 4 個 test file,42 test)
+
+### Git commits(全 push master)
+```
+622fd94 docs: correct box1 y-coord math in Task 0.1/0.2 test specs
+cb67386 fix(web): save-race data loss + undo ref-based state
+5b4019c feat(web): expand annotation editor header hint to reflect new shortcuts
+68ca1ed feat(web): annotation editor flush-save + ←/→ nav + submit flush
+7baa046 feat(web): annotation class shortcut dual action (change selected + set active)
+da2767a feat(web): annotation editor undo stack + Del + Ctrl+Z + Esc + shadowBox refactor
+9b775ea fix(web): resolve react-hooks lint errors on drag state mutations
+77495c6 feat(web): annotation canvas Esc cancels in-progress draw
+a5732e2 feat(web): annotation canvas 8-handle resize (with reverse-flip)
+e65196b fix(web): clean up drag state on window mouseup + mid-drag pan
+2e1c35f feat(web): annotation canvas select + move + draw (modeless)
+7a4f1f2 feat(web): annotation canvas viewport (zoom/pan/fit + responsive stage)
+1a9aa3a feat(web): annotation editor-actions helpers (class/delete/clamp/resize/draw)
+aeafe52 feat(web): undo stack helpers
+d22bd54 feat(web): annotation hit-test helpers (box + 8 handles)
+d73998d feat(web): annotation viewport helpers (zoom/pan/fit)
+a93db09 docs: annotation editor UX upgrade implementation plan
+```
+
+branch `feat/annotation-editor-ux-upgrade` 已 fast-forward merge 進 master + push origin;local branch 已刪除。
+
+### 最終測試狀態
+- Build: green(Next.js 16 + Turbopack,33 routes)
+- Lint: 0 errors(1 pre-existing warning 在 `name-form.tsx` 的 unused `isEdit`,不相關)
+- Unit tests: 88/88 pass(12 test files,包含 4 個新的 + 既有 8 個)
+- Playwright E2E: 未跑(spec 明確 skip,Konva 難測)
+- 手動 QA: 使用者選擇跳過,Vercel auto-deploy 後直接 production smoke test
+
+### 下一步
+1. **使用者在 production 實測 annotation editor**(`https://frc-annotation.vercel.app/annotate/[任一 assigned image]`)— 走 viewport(滾輪/mid-right drag/f fit)、modeless 互動(點 bbox 選取、拖 bbox 移動、拖 handle 縮放)、draw 新 bbox、Del/Ctrl+Z/Esc、class shortcut 雙重作用、←/→ nav(看 flush 是否正常)、submit。如遇到回歸,開新 branch 修
+2. **選配**:若手動 QA 抓到 edge case,考慮補 jsdom integration tests(spec §11 原本提過,被 Appendix C 延後)
+3. **選配**:code reviewer 提到的 I3(Ctrl+Z / Del 在 drag 中按會 state 不一致)— 目前是 documented known limitation,若真有使用者撞到再補 fix(Canvas 在 boxes prop 變更且 drag 中時 auto-cancel drag)
+4. **選配**:重度使用者反映 undo 50 不夠 → 擴大 cap;觸控板使用者 → 加 `Space + 左拖 pan`;右鍵 pan 衝突 context menu → 改 middle-only。都是 post-launch watch 項目
+5. **Python pipeline 側**:隊友用平台審核過 Gemini 批次標註後,如果某個 batch 走到 `completed`,匯出 YOLO zip → 借 GPU 跑 `python train_robot_model.py --local-dataset ...` 做端到端訓練驗證(這是 L1 project_gpu_training_workflow memory 提過的延後項)
+
+### 阻礙
+無技術 blocker。等使用者 production 實測 annotation editor UX。
+
+### 5-Question Reboot Check
+1. **做什麼?** 執行 Annotation Editor UX Upgrade plan — 把 Python 桌面版 `label_editor.py` 的 UX(zoom/pan、modeless 互動、8-handle resize、fit view、undo、←/→ nav、class shortcut)整套搬到 web annotator 頁。Subagent-driven 執行 14 task,每 task 兩段式 review。
+2. **進度?** 全部 14 task 完成 + 3 個 fix commits + 1 個 docs commit 全 push master。Build + lint + 88/88 tests 綠。branch `feat/annotation-editor-ux-upgrade` 已 merge + 刪除。
+3. **下一步?** 使用者在 production 實測 annotation editor UX。若發現 regression 開新 branch 修;否則進入下一個功能開發。
+4. **阻礙?** 無技術 blocker。等使用者實測。
+5. **檔案?**
+   - `web/components/annotation/AnnotationCanvas.tsx`(主要重寫對象)
+   - `web/components/annotation/viewport.ts` + `hit-test.ts` + `undo.ts` + `editor-actions.ts`(新 4 個 pure helper module)
+   - `web/app/(protected)/annotate/[imageId]/editor.tsx`(大改,undo + flush-save + nav + shortcut)
+   - `web/app/(protected)/review/[batchId]/review-tray.tsx`(加 readOnly prop)
+   - `docs/superpowers/plans/2026-04-17-annotation-editor-ux-upgrade.md`(plan)
+
+---
+
 ## Session: 2026-04-17 (第 4 次)
 
 ### 主題

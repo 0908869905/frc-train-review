@@ -4,6 +4,131 @@
 
 ---
 
+## 2026-04-17 (第 5 次 session) Annotation Editor UX Upgrade 實作期技術發現
+
+### 發現 Q：`react-hooks/immutability` 規則會因 effect 聲明順序誤判 ref mutations
+
+**問題**：React 19 的 `react-hooks/immutability` 規則在 Task 1.4 加了 Esc useEffect 之後,誤 flag 所有 `dragState.current = ...` mutations(5 個錯誤)。錯誤訊息類似「Modifying a value that is used in an effect」,但實際 dragState 是 event handler 自己管理的 ref,沒被 effect 讀過。
+
+**原因**：Esc useEffect 原本放在 state/ref 宣告之前(declarative style 誤以為 effect 位置無所謂)。React 19 compiler 做 flow analysis 時,從 effect 位置往前掃,把 dragState 標記成「effect 相依」,因此禁止後續 mutation — 這是 compiler 做的保守誤判,不是規則定義不精確。
+
+**解決方案**：commit `9b775ea` — 把 Esc useEffect **移到 state/ref 宣告之後**。這同時解決兩件事:
+1. Declaration-order issue(`setIsDrawing accessed before it is declared`)
+2. `react-hooks/immutability` 停止誤判
+
+**選擇理由**：
+1. 比起加 5+ 個 `eslint-disable-next-line react-hooks/immutability` 註解污染程式碼,移動 effect 位置是零成本的正確解法
+2. Effect-after-declaration 本來就是 React convention(effect 讀 state/refs 時 state/refs 必須先存在),只是過去沒 enforcement
+3. 未來 React 19 compiler 會更嚴,早一點遵守 convention 越好
+
+**遺留規則**:新的 useEffect 必須宣告在它所讀取的 refs/state 之後,否則 React 19 compiler 會把 refs 視為 effect-dependent → 後續所有 event handler 對該 ref 的 mutation 都會被誤判。
+
+**相關**:Mirror state pattern(`isPanning`/`isDrawing` 鏡射 `panState.current`/`drawState.current`)— React 19 `react-hooks/refs` 禁止 render 時 read refs,所以 cursor 邏輯用 state booleans 鏡射 refs。這是另一個 React 19 新規則,本 session 第一次撞到。
+
+---
+
+### 發現 R:shadowBox pattern — commit-on-release 避免 undo stack 在 drag 中爆炸
+
+**問題**:Task 2.1 refactor 前,Canvas 在 move/resize drag 中每個 mousemove frame 都呼叫 `onChange(boxes.map(...))`,parent editor 收到後會 `pushUndo(oldBoxes)` 進 stack。rapid mouse-move(60 Hz)= 1 秒內 undo stack 被推爆 50 cap,之前真正的編輯狀態全丟失。
+
+**原因**:Undo stack spec(§7)要求「cap 50 per-image,每個 mutation 前 push 一個 snapshot」。原實作把「drag 進行中每個 frame 的中間值」當成 mutation,導致一次拖動 = 數十次 push。關鍵誤解:「drag-in-progress 的 intermediate state」**不是 user-visible mutation**,只有 drag-release 的 final value 才是。
+
+**解決方案**:Canvas 引入 `shadowBox: useState<Box | null>` 做 live drag preview。
+- Drag 中不呼叫 `onChange`,只 `setShadowBox`
+- Mouseup 時才用 shadowBox 算出最終 boxes 陣列並呼叫 `onChange(...)`
+- Parent 只收到一次 commit,undo stack 只 push 一次
+- Esc 或 window-mouseup 清空 shadowBox → drag 中被 undo 會自動「還原」(shadowBox 消失,displayBoxes fallback 到 boxes 原狀)
+- 渲染:`const displayBoxes = shadowBox ? boxes.map(b => b.id === shadowBox.id ? shadowBox : b) : boxes;`
+
+**選擇理由**:
+1. 符合 spec §7 的 "mutation" 語意 — 只有 user-visible final state 才是 mutation
+2. 修掉 parent O(N) re-renders per mouse-move 的效能問題 — editor 不再每 frame 拿到新 boxes 陣列
+3. Cancel semantics 天然:清 shadowBox = 恢復原狀,不需要「reverse drag」邏輯
+4. Boxes state 的 source of truth 保持在 editor,Canvas 只是 view + interaction layer
+
+**副作用**:Canvas 有兩個渲染 path(shadowBox active / inactive),reader 要記得 `displayBoxes` 是 derived state 而非原 `boxes` prop。文件化在 Canvas 檔頭 comment。
+
+**架構意涵**:這個 pattern 可通用於任何「drag-to-edit 需要 cancel/undo 語意」的 UI — 圖表拖點、時間軸裁剪、色彩滑桿等。關鍵是 commit-on-release + cancel-on-escape 成對實作。
+
+---
+
+### 發現 S:flushSave 的 in-flight save race 會導致資料遺失(C1 critical)
+
+**問題**:最終 code reviewer 抓到 C1 critical bug(commit `cb67386`)。`doSave` 原本在 `saveInFlight.current === true` 時直接 `return true` + `pendingDirty.current = true`(但 pendingDirty 從未被讀取,是 dead code)。race scenario:
+
+```
+t=0   user 編輯 A
+t=2s  debounce 觸發 → doSave 開始 PATCH A (saveInFlight=true)
+t=3s  user 編輯 B(前 save 還在 in-flight)
+t=4s  user 按 →
+      → flushSave() → doSave() → saveInFlight=true → return true(立即回傳)
+      → caller router.push(next) 以為成功 navigate 走了
+      → 但 B 從未被 PATCH → silent data loss
+```
+
+**原因**:`doSave` 在 in-flight 時 short-circuit return true 是為了避免兩個 save race,但這個 short-circuit 假設「in-flight 的 save 內容 = 要保存的內容」,實際上 B 是在 A save 開始之後才產生的 *newer* state,A 的 save 不會救 B。
+
+**解決方案**:改為 **promise coalescing 模式**。
+```ts
+const inFlightSave = useRef<Promise<boolean> | null>(null);
+
+async function doSave(): Promise<boolean> {
+  // 若有 in-flight save,先等它完成(讓舊 save 走完)
+  if (inFlightSave.current) {
+    await inFlightSave.current;
+  }
+  // 然後啟動新 save,用最新的 boxesRef.current / updatedAtRef.current
+  const promise = (async () => { ... PATCH with fresh snapshot ... })();
+  inFlightSave.current = promise;
+  try {
+    return await promise;
+  } finally {
+    if (inFlightSave.current === promise) inFlightSave.current = null;
+  }
+}
+```
+
+這樣 B 保證會被 PATCH:flushSave → await inFlightSave(A 的 save)→ 然後用最新 boxesRef 跑新 PATCH(內容 = B)。
+
+**相關修法(同 commit)**:
+- I1:unused `undoStack` binding — `const [undoStack, setUndoStack] = useState<Box[][]>([])` 但 `undoStack` 從未被讀取 → 改成 `useRef<Box[][]>([])` 消除 unused binding
+- I2:`setUndoStack` updater 裡的副作用 — 原本 `setUndoStack(prev => { const next = pushUndo(prev, oldBoxes); setBoxes(newBoxes); return next; })` 在 updater 裡 call setBoxes,違反 React 19 reducer purity(Strict Mode 可能重複調用 updater → setBoxes 重複呼叫)。改成 ref-based 讀寫 undoStackRef,setBoxes 直接在 event handler 裡呼叫,不在 reducer updater 裡
+
+**選擇理由**:
+1. Promise coalescing 是並發控制的 standard pattern(常見於 fetch dedup、lazy init、DB connection pooling),對讀者友好
+2. `pendingDirty` ref 是 scaffolding for 未來,但從未實作 → YAGNI violation + 造成真的 bug。刪掉比保留安全
+3. Refs 本來就適合「event handlers 之間 shared 但不觸發 render 的值」,undoStack 符合這個 profile — 驅動 Ctrl+Z 行為但不直接渲染 UI
+4. React 19 Strict Mode 對 reducer purity 嚴格,越早清理這類 updater 副作用越好,避免未來升版撞雷
+
+**學到**:
+- `return true` 在 short-circuit 裡要特別小心 — 「return true」意思不是「操作成功了」,是「我不做,交給下個人」。這種語意 drift 很容易 mask race
+- Code reviewer 的 threat modeling 很有價值 — 發現 S 的 race 是手動走 timing scenario 才抓到,功能測試抓不到
+
+---
+
+### 發現 T:Plan 文件裡的 test spec 數學錯誤 — subagents 實地驗算會抓到
+
+**問題**:Task 0.1 的 fit-view test 對 1920×1080 image in 800×600 container 原本寫 `vp.zoom ≈ 600/1080`(height limit),但正確是 `800/1920`(width limit)。因為 `Math.min(800/1920, 600/1080) = Math.min(0.417, 0.556) = 0.417`,取較小的 width fit。
+
+Task 0.2 的 box1 (y=0.5, h=0.4, natH=500) 原本寫 `y1=100, y2=300`,正確是 `y1=150, y2=350`。因為 `y1 = (0.5 - 0.4/2) × 500 = 0.3 × 500 = 150`,`y2 = (0.5 + 0.4/2) × 500 = 0.7 × 500 = 350`。
+
+**原因**:Plan 作者(2026-04-17 session 4 的我)在寫 test spec 時心算,normalized ↔ pixel 的 `center ± half_size × dimension` 轉換容易粗心(忘記乘 dimension、忘記半徑要除 2)。Self-review 沒 catch 因為 self-review 只看邏輯對稱,沒有再算一次。
+
+**解決方案**:Subagent implementers 在 run test 時會直接看到 test fail。一驗算就發現 expectation 數學錯,修掉 test expectation(不是修實作)。我在 session 尾聲補 commit `622fd94` 把 plan doc 也改對,避免未來讀 plan 的人看到錯資料。
+
+**選擇理由**:
+1. "Trust but verify" pattern — implementer 不盲從 spec,實際跑 math。這反映 subagent-driven-development 的 review checkpoints 是有價值的
+2. 修 test 不修實作是正確方向:spec 只說「fit-view 應等比縮放到 container 內」,沒說「一定是 height-limit」。實作結果(`0.417`)才是對的
+
+**預防措施**(未來 playbook):
+- 下次寫 plan 裡的 test 先用 calculator 驗算每個 hardcoded value,特別是 normalized ↔ pixel 的轉換(center ± h/2 容易算錯)
+- 在 plan spec 裡直接附上「計算步驟」而非只寫結果:`y1 = (0.5 - 0.4/2) × 500 = 150`,寫 expression 比寫結果更難寫錯,也讓 reader 能驗算
+- Self-review 應該「re-derive 一次」而不是「re-read 一次」
+
+**次要發現**:Subagent 發現 test spec 數學錯時,沒人類干預就自己改 test。這是預期且期待的自主行為 — 若 implementer 要等人類確認「是你算錯還是我算錯」,subagent-driven 就失去速度優勢。但這假設 implementer 的代數能力可靠 — 若是更複雜數學(矩陣、微積分),可能需要手動 spot-check。
+
+---
+
 ## 2026-04-17 (第 3 次 session) step-up-only authz + UI 補完期技術發現
 
 ### 發現 M：`ACTION_SCOPE` map 作為 per-action step-up 需求的 single source of truth
