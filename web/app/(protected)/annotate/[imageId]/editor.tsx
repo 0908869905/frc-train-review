@@ -40,14 +40,14 @@ export function Editor(p: Props) {
   const [status, setStatus] = useState('saved');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [undoStack, setUndoStack] = useState<Box[][]>([]);
+  // Undo stack lives entirely in a ref — no UI depends on it, so no useState needed.
+  const undoStackRef = useRef<Box[][]>([]);
 
   // `onBoxesChange` is what the canvas calls whenever boxes mutate (draw/move/resize/class/delete).
   // It snapshots the OLD boxes into undo stack before setting new.
   const onBoxesChange = useCallback(
     (next: Box[]) => {
-      setUndoStack((stack) => pushUndo(stack, boxes, 50));
+      undoStackRef.current = pushUndo(undoStackRef.current, boxes, 50);
       setBoxes(next);
     },
     [boxes]
@@ -55,8 +55,8 @@ export function Editor(p: Props) {
 
   // Clear selected and undo stack when imageId changes.
   useEffect(() => {
+    undoStackRef.current = [];
     setSelectedId(null);
-    setUndoStack([]);
   }, [p.imageId]);
 
   const currentIdx = p.queueIds.indexOf(p.imageId);
@@ -74,43 +74,47 @@ export function Editor(p: Props) {
     updatedAtRef.current = updatedAt;
   }, [updatedAt]);
 
-  const saveInFlight = useRef(false);
-  const pendingDirty = useRef(false);
+  // Promise of the currently-in-flight save (if any), used to coalesce rapid flushes.
+  const inFlightSave = useRef<Promise<boolean> | null>(null);
 
   // Perform the save; return whether we ended up with all pending changes persisted.
+  // If a save is already in flight, await it first — then kick off a fresh save
+  // with the LATEST boxes. Prevents silent data loss on rapid ←/→/S navigation.
   const doSave = useCallback(async (): Promise<boolean> => {
-    if (saveInFlight.current) {
-      pendingDirty.current = true;
-      return true;
+    if (inFlightSave.current) {
+      await inFlightSave.current;
     }
-    saveInFlight.current = true;
-    setStatus('saving...');
-    try {
-      const res = await fetch(`/api/images/${p.imageId}/annotations`, {
-        method: 'PATCH',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          lastKnownUpdatedAt: updatedAtRef.current,
-          boxes: boxesRef.current.map((b) => ({
-            classIdx: b.classIdx,
-            x: b.x,
-            y: b.y,
-            w: b.w,
-            h: b.h,
-          })),
-        }),
-      });
-      if (res.ok) {
-        const json = await res.json();
-        setUpdatedAt(json.updatedAt);
-        setStatus('saved');
-        return true;
+    const promise = (async (): Promise<boolean> => {
+      setStatus('saving...');
+      try {
+        const res = await fetch(`/api/images/${p.imageId}/annotations`, {
+          method: 'PATCH',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            lastKnownUpdatedAt: updatedAtRef.current,
+            boxes: boxesRef.current.map((b) => ({
+              classIdx: b.classIdx,
+              x: b.x,
+              y: b.y,
+              w: b.w,
+              h: b.h,
+            })),
+          }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          setUpdatedAt(json.updatedAt);
+          setStatus('saved');
+          return true;
+        }
+        setStatus('save failed');
+        return false;
+      } finally {
+        inFlightSave.current = null;
       }
-      setStatus('save failed');
-      return false;
-    } finally {
-      saveInFlight.current = false;
-    }
+    })();
+    inFlightSave.current = promise;
+    return await promise;
   }, [p.imageId]);
 
   // Debounced auto-save (2s) — replaces the old inline useEffect.
@@ -169,13 +173,11 @@ export function Editor(p: Props) {
       // Ctrl+Z undo (Mac: metaKey)
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault();
-        setUndoStack((stack) => {
-          const popped = popUndo(stack);
-          if (!popped) return stack;
-          setBoxes(popped.top);
-          setSelectedId(null);
-          return popped.stack;
-        });
+        const popped = popUndo(undoStackRef.current);
+        if (!popped) return;
+        undoStackRef.current = popped.stack;
+        setBoxes(popped.top);
+        setSelectedId(null);
         return;
       }
 
