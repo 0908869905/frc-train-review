@@ -77,6 +77,10 @@ export function Editor(p: Props) {
   // Promise of the currently-in-flight save (if any), used to coalesce rapid flushes.
   const inFlightSave = useRef<Promise<boolean> | null>(null);
 
+  // Last boxes reference that was successfully persisted. Flush skips the PATCH
+  // round trip when current boxes ref-equals this (nothing to persist).
+  const lastSavedBoxesRef = useRef<Box[]>(p.initialBoxes);
+
   // Perform the save; return whether we ended up with all pending changes persisted.
   // If a save is already in flight, await it first — then kick off a fresh save
   // with the LATEST boxes. Prevents silent data loss on rapid ←/→/S navigation.
@@ -84,6 +88,7 @@ export function Editor(p: Props) {
     if (inFlightSave.current) {
       await inFlightSave.current;
     }
+    const snapshot = boxesRef.current;
     const promise = (async (): Promise<boolean> => {
       setStatus('saving...');
       try {
@@ -92,7 +97,7 @@ export function Editor(p: Props) {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
             lastKnownUpdatedAt: updatedAtRef.current,
-            boxes: boxesRef.current.map((b) => ({
+            boxes: snapshot.map((b) => ({
               classIdx: b.classIdx,
               x: b.x,
               y: b.y,
@@ -104,6 +109,7 @@ export function Editor(p: Props) {
         if (res.ok) {
           const json = await res.json();
           setUpdatedAt(json.updatedAt);
+          lastSavedBoxesRef.current = snapshot;
           setStatus('saved');
           return true;
         }
@@ -129,7 +135,16 @@ export function Editor(p: Props) {
   }, [boxes, doSave]);
 
   // Flush: cancel pending debounce and save immediately. Returns true if persisted.
+  // Skips the PATCH round trip when boxes ref-equal the last persisted snapshot
+  // AND no debounce / in-flight save is outstanding (nothing to persist).
   const flushSave = useCallback(async (): Promise<boolean> => {
+    if (
+      boxesRef.current === lastSavedBoxesRef.current &&
+      saveTimer.current === null &&
+      inFlightSave.current === null
+    ) {
+      return true;
+    }
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
@@ -250,6 +265,7 @@ export function Editor(p: Props) {
   useEffect(() => {
     const nextIds = p.queueIds.slice(currentIdx + 1, currentIdx + 6);
     for (const id of nextIds) {
+      router.prefetch(`/annotate/${id}`);
       fetch(`/api/images/${id}/signed-url`)
         .then((r) => r.json())
         .then((j) => {
