@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 import { ClassPalette } from '@/components/annotation/ClassPalette';
 import type { Box, ClassDef } from '@/components/annotation/types';
 import { Button } from '@/components/ui/button';
+import { pushUndo, popUndo } from '@/components/annotation/undo';
+import { deleteSelected } from '@/components/annotation/editor-actions';
 
 const AnnotationCanvas = dynamic(
   () =>
@@ -34,6 +36,25 @@ export function Editor(p: Props) {
   const [updatedAt, setUpdatedAt] = useState(p.initialUpdatedAt);
   const [status, setStatus] = useState('saved');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [undoStack, setUndoStack] = useState<Box[][]>([]);
+
+  // `onBoxesChange` is what the canvas calls whenever boxes mutate (draw/move/resize/class/delete).
+  // It snapshots the OLD boxes into undo stack before setting new.
+  const onBoxesChange = useCallback(
+    (next: Box[]) => {
+      setUndoStack((stack) => pushUndo(stack, boxes, 50));
+      setBoxes(next);
+    },
+    [boxes]
+  );
+
+  // Clear selected and undo stack when imageId changes.
+  useEffect(() => {
+    setSelectedId(null);
+    setUndoStack([]);
+  }, [p.imageId]);
 
   const currentIdx = p.queueIds.indexOf(p.imageId);
   const nextId = p.queueIds[currentIdx + 1];
@@ -88,19 +109,51 @@ export function Editor(p: Props) {
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
+      // Ctrl+Z undo (Mac: metaKey)
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+        e.preventDefault();
+        setUndoStack((stack) => {
+          const popped = popUndo(stack);
+          if (!popped) return stack;
+          setBoxes(popped.top);
+          setSelectedId(null);
+          return popped.stack;
+        });
+        return;
+      }
+
+      // Delete / Backspace → remove selected
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selectedId) {
+          e.preventDefault();
+          onBoxesChange(deleteSelected(boxes, selectedId));
+          setSelectedId(null);
+        }
+        return;
+      }
+
+      // Escape → deselect
+      if (e.key === 'Escape') {
+        setSelectedId(null);
+        return;
+      }
+
       const key = e.key.toLowerCase();
 
-      if (key === 's') {
+      // Submit takes priority — if user bound 's' to a class, we still submit.
+      if (key === 's' && !e.ctrlKey && !e.metaKey) {
         submit();
         return;
       }
 
+      // Class-shortcut (Task 2.2 will add dual action; for now: just set active).
       const matchByShortcut = p.classes.findIndex((c) => c.shortcut === key);
       if (matchByShortcut >= 0) {
         setActiveIdx(matchByShortcut);
         return;
       }
 
+      // Numeric fallback
       if (key >= '1' && key <= '9') {
         const idx = parseInt(key, 10) - 1;
         if (idx < p.classes.length) setActiveIdx(idx);
@@ -108,7 +161,7 @@ export function Editor(p: Props) {
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [submit, p.classes]);
+  }, [submit, p.classes, selectedId, boxes, onBoxesChange]);
 
   useEffect(() => {
     const nextIds = p.queueIds.slice(currentIdx + 1, currentIdx + 6);
@@ -156,7 +209,7 @@ export function Editor(p: Props) {
             classes={p.classes}
             activeClassIdx={activeIdx}
             boxes={boxes}
-            onChange={setBoxes}
+            onChange={onBoxesChange}
             selectedId={selectedId}
             onSelect={setSelectedId}
           />

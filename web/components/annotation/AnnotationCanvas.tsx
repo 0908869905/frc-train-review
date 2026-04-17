@@ -119,17 +119,16 @@ export function AnnotationCanvas({
   } | null>(null); // image coords
   const [isPanning, setIsPanning] = useState(false);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [shadowBox, setShadowBox] = useState<Box | null>(null); // live preview during move/resize
 
-  // Esc key → cancel in-progress draw.
+  // Esc key → cancel in-progress drag (reverts move/resize via shadowBox disappearing).
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
       if (!dragState.current) return;
-      // Cancel in-progress draw. (Move/resize will get full revert in Task 2.1
-      // when shadowBox is introduced — in Task 1.4 they already committed
-      // frame-by-frame, so Esc just stops further progression.)
       const wasDraw = dragState.current.kind === 'draw';
       dragState.current = null;
+      setShadowBox(null);
       if (wasDraw) {
         setIsDrawing(false);
         setDrawPreview(null);
@@ -234,12 +233,13 @@ export function AnnotationCanvas({
       const s = dragState.current;
       const dx = (ix - s.startImgX) / natW;
       const dy = (iy - s.startImgY) / natH;
-      const moved = clampMoveNorm({
-        ...s.orig,
-        x: s.orig.x + dx,
-        y: s.orig.y + dy,
-      });
-      onChange(boxes.map((b) => (b.id === s.id ? moved : b)));
+      setShadowBox(
+        clampMoveNorm({
+          ...s.orig,
+          x: s.orig.x + dx,
+          y: s.orig.y + dy,
+        })
+      );
     } else if (dragState.current.kind === 'draw') {
       dragState.current.curImgX = ix;
       dragState.current.curImgY = iy;
@@ -264,9 +264,7 @@ export function AnnotationCanvas({
 
       s.curRect = { x1, y1, x2, y2 };
       const committed = commitResize(s.orig, { x1, y1, x2, y2 }, natW, natH);
-      if (committed) {
-        onChange(boxes.map((b) => (b.id === s.id ? committed : b)));
-      }
+      if (committed) setShadowBox(committed);
     }
   }
 
@@ -283,7 +281,15 @@ export function AnnotationCanvas({
     dragState.current = null;
 
     if (action.kind === 'move') {
-      // Already committed in handleMouseMove; nothing to do.
+      if (shadowBox) {
+        onChange(boxes.map((b) => (b.id === action.id ? shadowBox : b)));
+        setShadowBox(null);
+      }
+    } else if (action.kind === 'resize') {
+      if (shadowBox) {
+        onChange(boxes.map((b) => (b.id === action.id ? shadowBox : b)));
+        setShadowBox(null);
+      }
     } else if (action.kind === 'draw') {
       setIsDrawing(false);
       const dw = Math.abs(action.curImgX - action.startImgX);
@@ -303,14 +309,13 @@ export function AnnotationCanvas({
         },
         natW,
         natH,
-        activeClassIdx
+        activeClassIdx,
       );
       setDrawPreview(null);
       if (!newBox) return;
       onChange([...boxes, newBox]);
       onSelect(newBox.id);
     }
-    // resize: already committed live in handleMouseMove; nothing to do.
   }
 
   // Suppress browser context menu so right-click pan works.
@@ -333,6 +338,7 @@ export function AnnotationCanvas({
       if (dragState.current) {
         const wasDraw = dragState.current.kind === 'draw';
         dragState.current = null;
+        setShadowBox(null);
         if (wasDraw) {
           setIsDrawing(false);
           setDrawPreview(null);
@@ -403,6 +409,10 @@ export function AnnotationCanvas({
     );
   }
 
+  const displayBoxes = shadowBox
+    ? boxes.map((b) => (b.id === shadowBox.id ? shadowBox : b))
+    : boxes;
+
   // Image render rect in display coords.
   const imgTL = imgToDisp(0, 0, vp);
   const imgDispW = natW * vp.zoom;
@@ -461,7 +471,7 @@ export function AnnotationCanvas({
           {img && (
             <KImage image={img} x={imgTL.x} y={imgTL.y} width={imgDispW} height={imgDispH} />
           )}
-          {boxes.map(renderBox)}
+          {displayBoxes.map(renderBox)}
           {drawPreview && (() => {
             const tl = imgToDisp(
               Math.min(drawPreview.x1, drawPreview.x2),
