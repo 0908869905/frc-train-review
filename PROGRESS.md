@@ -1,5 +1,205 @@
 # frc-train-review - 進度追蹤
 
+## Session: 2026-04-17 (第 4 次)
+
+### 主題
+兩件事:
+1. **端到端冒煙測試驗證成功** — 使用者在本地 `c:\Users\USER\Downloads\FRC-yolo.zip` 收到從 production `/review` export 的 YOLO zip(8 張圖 + 8 labels + classes.txt + data.yaml),驗證檔案結構、classes 順序(Red=0, Blue=1)、data.yaml、label 格式全部合規。整個平台從登入 → 建專案 → upload zip → finalize → assign → annotate → submit → review approve → export 完整 pipeline 首次跑通。
+2. **規劃 Annotation Editor UX Upgrade** — 使用者回報「審核的介面目前操作很不人性化」,要求把 Python 桌面版 `label_editor.py`(team 既有工具)的 UX 整套搬到 web annotator 頁(`/annotate/[imageId]`),唯一差別是 class 切換從 Tab toggle 改成 class 自己的 shortcut(r/b/...)。走完 `superpowers:brainstorming` skill 流程,產出 design spec 並 commit。**尚未寫 implementation plan、尚未實作**。
+
+### 完成項目
+- [x] 確認 production 端到端冒煙測試成功(FRC-yolo.zip 結構與 YOLO 格式全通過)
+- [x] 比對 `label_editor.py` vs 現有 `web/components/annotation/AnnotationCanvas.tsx` 功能落差(整理成表格)
+- [x] 走 brainstorming 流程,使用者確認:
+  - **Scope(Q1)**:整套 label_editor.py UX 搬(zoom/pan、move/resize bbox、fit view、undo、prev/next nav、class shortcut 替代 Tab toggle)
+  - **Mode(Q2)**:Modeless — drag 空白 = 畫新 box,click bbox = 選,drag bbox = 移,drag handle = 縮放
+  - **架構**:方案 1 — 擴充既有 `AnnotationCanvas.tsx` 加 `readOnly?: boolean` prop(reviewer tray 同時受惠,免費拿到 zoom/pan)
+- [x] 分 4 段 section 呈現 design(viewport / bbox 互動 / keyboard+undo+autosave / readOnly+檔案+測試),每段獲使用者 OK
+- [x] 寫 design spec 到 `docs/superpowers/specs/2026-04-17-annotation-editor-ux-upgrade-design.md`(257 行,12 個 section + 2 個 appendix)
+- [x] Spec self-review(無 placeholder、內部一致、scope 單一 plan 可涵蓋)
+- [x] Commit `26e6fae docs: annotation editor UX upgrade design spec`
+
+### 核心設計決策(供下次 session recall)
+1. **Modeless 互動**:hit-test 順序 handle > bbox > empty;drag empty = draw,click empty = deselect
+2. **8 個 resize handles**:TL/TC/TR/ML/MR/BL/BC/BR,selected 才顯示
+3. **Move clamp 偏離 label_editor**:`cx ∈ [bw/2, 1-bw/2]` 讓 bbox 完全在 image 內(避免 YOLO 負座標);Python 版只 clamp center
+4. **Class shortcut 雙重作用**:有 selected → 改 selected class **同時** set "next-draw active"
+5. **Undo per-image**:cap 50 entry,切圖清空;不做 redo(YAGNI)
+6. **Auto-save immediate flush**:←/→ 切圖前、S submit 前、unmount 前 flush pending save;失敗不切圖
+7. **ReadOnly mode**:reviewer tray 加一行 `readOnly` prop 即享 zoom/pan/fit
+8. **Zoom**:滾輪 1.15×/tick cursor-centered,bounds [0.1, 10];fit view 3× cap
+9. **Pan**:middle-click drag + right-click drag(需 preventDefault context menu)
+
+### 修改檔案
+- `docs/superpowers/specs/2026-04-17-annotation-editor-ux-upgrade-design.md`(新增,257 行)
+
+### Git commits
+- `26e6fae docs: annotation editor UX upgrade design spec`
+
+### 規劃的未來檔案變動(尚未實作)
+| 檔案 | 動作 |
+|---|---|
+| `web/components/annotation/AnnotationCanvas.tsx` | **重寫**(加 viewport + 互動 + readOnly) |
+| `web/app/(protected)/annotate/[imageId]/editor.tsx` | 加 ←/→ nav、f/Ctrl+Z/Esc、class shortcut 雙重作用、flush-before-nav |
+| `web/components/annotation/types.ts` | 加 viewport helper types(可選) |
+| `web/app/(protected)/review/[batchId]/review-tray.tsx` | 加 `readOnly` prop(1 行) |
+
+### 下一步
+1. **使用者 review spec**(`docs/superpowers/specs/2026-04-17-annotation-editor-ux-upgrade-design.md`)— 目前阻塞在此
+2. Spec 通過後 invoke `superpowers:writing-plans` skill 產 implementation plan
+3. Plan 通過後進實作(subagent-driven-development 或 inline,待使用者選)
+
+### 阻礙
+無技術 blocker。等使用者 review spec。
+
+### 5-Question Reboot Check
+1. **做什麼?** (a) 驗證 production 端到端冒煙測試成功(FRC-yolo.zip 合規);(b) 規劃把 `label_editor.py` UX 整套搬到 web annotator 頁 — design spec 完成並 commit,尚未寫 plan 與實作。
+2. **進度?** Design spec(257 行)已 commit(`26e6fae`);等使用者 review 後才能進 writing-plans。
+3. **下一步?** 使用者 review `docs/superpowers/specs/2026-04-17-annotation-editor-ux-upgrade-design.md`;通過後 invoke `superpowers:writing-plans` skill。
+4. **阻礙?** 無技術 blocker,等使用者 review spec。
+5. **檔案?**
+   - `docs/superpowers/specs/2026-04-17-annotation-editor-ux-upgrade-design.md`(design spec,主要跟隨對象)
+   - `D:\FRC\frc-train-review\label_editor.py`(參考來源,Python 桌面版)
+   - `web/components/annotation/AnnotationCanvas.tsx`(要重寫)
+   - `web/app/(protected)/annotate/[imageId]/editor.tsx`(要加 nav + shortcut)
+   - `web/app/(protected)/review/[batchId]/review-tray.tsx`(加 readOnly prop)
+
+---
+
+## Session: 2026-04-17 (第 3 次)
+
+### 主題
+Production 平台（`https://frc-annotation.vercel.app`）端到端冒煙測試。使用者用 `redacted@example.com` 登入後撞到兩個症狀：`/review` 顯示「僅覆核者 / 管理員可進入」、`/admin` 回 404。使用者決策：**不再綁定特定 Gmail 帳號才能登入/操作，只要 step-up 密碼正確即可** — 整塊 role-based RBAC 從 route layer 移除,step-up 密碼變成 reviewer/admin 動作的唯一閘門。後續工作往外擴：補 global top nav、New batch 按鈕、Export 按鈕、修 `/admin/members` 看不到新登入使用者的 bug。並產出端到端測試用的 `test_batch_8.zip`。
+
+### 完成項目
+
+**修復 1：step-up 密碼為唯一閘門（drop role-based RBAC）**
+- `web/lib/rbac.ts` 新增 `ACTION_SCOPE: Partial<Record<Action, StepUpScope>>` + `requireAuthz(session, action, request)` + `authzOr401` wrapper — 把「哪個 action 要哪種 step-up」集中成單一 source of truth。`canPerform` / `requireRole` 保留給 unit test compat，但沒有 route 再呼叫
+- 10 個 API route `requireRole` → `authzOr401` 對應正確 scope：admin/users POST+GET、batches/assign POST、batches/finalize POST、blob/upload POST、images/approve POST、images/reject POST、projects POST+PATCH、projects/[id]/batches POST、projects/[id]/export GET
+- `/api/images/[id]/signed-url`：privileged 判斷改為「持有 reviewer 或 admin step-up cookie」而非查 role
+- `/api/batches/[id]/assign`：拿掉 assignee 的 role 檢查，任何 active user 可被分派
+- 補 `/admin/page.tsx`（redirect 到 `/admin/members`）修 `/admin` 404
+- `/review/page.tsx` 與 `/admin/members/page.tsx` 移除 role check
+- `StepUpGuard scope="admin"` 包 `/projects/new`、`/projects/[id]/upload`、`/projects/[id]/batches/[batchId]/assign`
+- `StepUpGuard scope="reviewer"` 包 `/projects/[id]/export`
+- `/projects` 列表拿掉 `canCreate` role check，"New project" 按鈕永遠顯示
+- Dashboard「Ready for Review」區塊對所有人顯示
+- Tests 改寫：3 個 integration 測試檔換 cookie helpers（admin/reviewer step-up cookies）+ 401 step-up-required 取代 403 role-forbidden；`admin-users.test.ts` 改測「session id ≠ step-up cookie userId → 401」
+- 同步修掉現存 lint errors：`step-up-guard.tsx` / `step-up-dialog.tsx` / `completed-batches.tsx` / `rbac-stepup.test.ts`
+- `web/.gitignore` 補 `/test-results` / `/playwright-report`
+- 93/93 tests 綠、`pnpm build` 綠、`pnpm lint` 0 errors 1 warning
+- Commit `79da235`（32 files, +310/-167）
+
+**修復 2：Project home 列 batches + New batch 按鈕 + finalize error detail**
+- `/projects/[id]/page.tsx` 改為顯示所有 batch（state + image count）+ "New batch" 按鈕連到 `/projects/[id]/upload`（先前只有「No batches yet」空字串）
+- `/api/batches/[id]/finalize` 所有失敗分支改用 `return NextResponse.json({ error }, { status })`；classes mismatch 錯誤包含 `expected=[...] got=[...]` 對照；外層 try/catch 吸未預期錯誤
+- `batch-uploader.tsx` 改讀 JSON error body 顯示給使用者
+- Commit `72500df`（3 files, +178/-103）
+
+**修復 3：Global top nav + Export button + 智能 batch 連結**
+- 新 `web/components/top-nav.tsx`（server component，FRC Annotation logo + Dashboard + Projects + 使用者名 + Sign out server-action）
+- 新 `web/app/(protected)/layout.tsx` 包 TopNav；`/review` 與 `/admin` 的 StepUpGuard layout nested 在這之下
+- 依使用者指示 `/review` / `/admin` 仍維持 URL-only 不進 nav
+- `/projects/[id]/page.tsx` 加「Export YOLO zip (N)」按鈕（N = approved image count）
+- Batch 列表連結智能路由：`under_review` → `/review/[id]`、`completed` → `/projects/[id]/export`、否則 → assign page
+- `/login` 文案更新掉白名單相關舊字串
+- `lib/auth-test.ts` `FakeSession` 加 `name?: string | null`（TopNav 需要）
+- Commit `2e746dc`（5 files, +96/-6）
+
+**修復 4：`/admin/members` 顯示所有已登入使用者**
+- 根因：舊 page iterate `EmailWhitelist` 為主表 join User；白名單 sign-in gate 上 session 拿掉後，多數 Google users 沒 whitelist row，整個隱形，只剩 seeded admin 看得到
+- 改為 `User.findMany()` 為主表，分兩區顯示：
+  - **已登入 (N)**：所有 User row，多一欄「白名單角色」，當 whitelist role ≠ User.role 以 amber `{role}（未同步）` 呈現 — 讓 E4「L1 backlog drift」終於可見
+  - **預訂白名單 (N)**：只在有 whitelist row 無對應 User 時顯示
+- Commit `00b6fce`（1 file, +100/-40）
+
+**端到端測試 artifact**
+- 新 `datasets/notyet/_test_samples/make_test_zip.py` + `test_batch_8.zip`（1.6 MB，8 張從 2895 張 `datasets/notyet/` 均勻取樣 + YOLO labels + `classes.txt = "Red\nBlue\n"`）
+- 用於端到端冒煙測試上傳流程；注意 project class 必須 idx0=Red、idx1=Blue 順序一致，否則 finalize reject 並附上 expected/got diff
+
+### 修改檔案（核心）
+- `web/lib/rbac.ts`（ACTION_SCOPE map、requireAuthz、authzOr401 — 新 authz 核心）
+- `web/app/(protected)/layout.tsx` + `web/components/top-nav.tsx`（global nav 結構）
+- `web/app/(protected)/projects/[id]/page.tsx`（batch-aware + export button + smart links）
+- `web/app/(protected)/admin/members/page.tsx`（User-primary 重寫）
+- `web/app/(protected)/admin/page.tsx`（新建，redirect 到 `/admin/members`）
+- `web/app/api/batches/[id]/finalize/route.ts`（try/catch + JSON error pattern，可作為其他 route 遷移模板）
+- `datasets/notyet/_test_samples/test_batch_8.zip` + `make_test_zip.py`
+
+### Git commits（皆已 push master + Vercel auto-deployed）
+1. `79da235 feat(web): make step-up password the sole gate; drop role-based RBAC`
+2. `72500df feat(web): project home lists batches with New batch button; finalize surfaces error detail`
+3. `2e746dc feat(web): global top nav + export button on project home + smart batch links`
+4. `00b6fce fix(web): /admin/members shows all logged-in users, not just whitelist entries`
+
+### Production status
+- `https://frc-annotation.vercel.app` 已跑在 `00b6fce`
+- Env vars 完整（DATABASE_URL / AUTH_* / BLOB_READ_WRITE_TOKEN / REVIEWER_PASSWORD_HASH / ADMIN_PASSWORD_HASH / STEPUP_COOKIE_SECRET）
+- 選配 `NEXT_PUBLIC_APP_URL` / `UPSTASH_*` 仍未設
+
+### 下一步
+1. **使用者端到端實測**（rosalyn 帳號 fresh login）：top nav + Sign out、Projects → 建 `2026inmis-bumper`（classes: Red(r) / Blue(b)，順序不可錯）→ New batch → 上傳 `test_batch_8.zip` → 自我分派 → 標註 → submit → `/review` + `frc6998` 覆核 → export
+2. **選配**：若使用者想用單一 "bumper" class 而非 Red/Blue 拆兩 class,需重產 test zip 做 class remapping（本 session 未做）
+3. **選配**：連 Upstash Redis（step-up rate-limit 跨 instance 持久化）+ 設 `NEXT_PUBLIC_APP_URL` 讓 step-up CSRF origin check 生效
+
+### 5-Question Reboot Check
+1. **做什麼？** Production 冒煙測試發現兩個 blocker（`/admin` 404 + `/review` role gate），使用者決策 drop role-based RBAC 改以 step-up 密碼為唯一閘門。後續擴充：global top nav、New batch 按鈕、Export 按鈕、修 `/admin/members` 看不見新登入使用者的 bug。產出端到端測試 zip。
+2. **進度？** 4 個 commit 全 push、Vercel auto-deploy 綠（跑在 `00b6fce`）、93/93 tests + build + lint 綠。`test_batch_8.zip` ready。
+3. **下一步？** 使用者用 rosalyn 帳號跑完整端到端實測（建專案 → 上傳 zip → 分派 → 標註 → submit → 覆核 → export）。
+4. **阻礙？** 無技術 blocker。等使用者實測。若要單一 class bumper 專案需重產 zip。
+5. **檔案？**
+   - `web/lib/rbac.ts`（ACTION_SCOPE + requireAuthz + authzOr401）
+   - `web/app/(protected)/layout.tsx` + `web/components/top-nav.tsx`
+   - `web/app/(protected)/projects/[id]/page.tsx`
+   - `web/app/(protected)/admin/members/page.tsx`
+   - `web/app/api/batches/[id]/finalize/route.ts`（JSON-error pattern 模板）
+   - `datasets/notyet/_test_samples/test_batch_8.zip` + `make_test_zip.py`
+
+---
+
+## Session: 2026-04-17 (第 2 次)
+
+### 主題
+短收尾 session。接在同日上一個 session（三種角色介面 + step-up auth 實作完成 + production 部署）之後，使用者 Gmail 登入實測時撞到兩個連動的 blocker，本 session 修完即收尾。
+
+### 完成項目
+
+**修復 1：移除 email 白名單登入閘門**
+- 症狀：Google 登入後 Google 顯示 "Access Denied / You do not have permission to sign in"
+- 根因：`web/lib/auth.ts` 的 `signIn` callback 查不到 `EmailWhitelist` row 就 `return false`，Google OAuth 回給用戶 AccessDenied
+- 修法：改為「白名單找不到 → fallback role = `annotator`」；白名單保留作為「指定某些 email 為 admin / final_reviewer」的晉升機制，不再擋人
+- 安全論證：reviewer / admin 頁面仍有 step-up 密碼（`frc6998` / `980415`）擋著，開放 annotator 門檻 ≠ 開放 reviewer / admin 操作
+
+**修復 2：Vercel production auto-deploy 失敗**
+- 症狀：push 到 master 後 Vercel auto-deploy 報 `No Next.js version detected. Make sure your package.json has "next" in either "dependencies" or "devDependencies"`；其實上一個 docs commit `1440204`（上 session 結尾）的 auto-deploy 也已經壞過，當時被 CLI 手動 deploy 覆蓋沒注意到
+- 根因：Vercel project 的 Root Directory 設定是 `.`（repo 根目錄），但 Next.js 在 `web/` 子目錄。之前 CLI deploy 沒讀這個設定，接上 GitHub 後 auto-deploy 走 Vercel clone repo + 讀 project 設定的路徑才觸發
+- 修法：CLI 沒提供改 rootDirectory 的子命令，改用 Vercel REST API `PATCH /v9/projects/{id}` body `{"rootDirectory":"web"}`，auth token 從 `$APPDATA/com.vercel.cli/Data/auth.json` 讀
+- 驗證：`vercel redeploy <failed-url> --target production` 觸發新 deploy，aliased 到 `frc-annotation.vercel.app`；curl `/login` 200、`/` 307 ✓
+
+### 修改檔案
+- `web/lib/auth.ts`（`signIn` callback 邏輯改動，+2 / -2）
+
+### Git commits
+- `092d745 feat(web): remove email whitelist gate at sign-in`（已 push，觸發 auto-deploy；修 Root Directory 後 redeploy 成功）
+
+### 下一步
+1. **使用者仍需 Gmail 端到端驗證**（現在應該真的能登入了）— onboarding 填中文姓名、進 `/review` 輸 `frc6998`、進 `/admin` 輸 `980415`、`/admin/members` 新增成員、reviewer 匯出 zip
+2. 登入後於 `/projects/new` 建 `bumper`(shortcut `b`)+`fuels`(shortcut `f`) 專案
+3. **選配**：連 Upstash Redis（否則 step-up rate limit 只在 in-memory、多 instance 無效）
+4. **選配**：把 `NEXT_PUBLIC_APP_URL` 設為 prod URL 讓 step-up CSRF origin check 真正作用
+
+### 5-Question Reboot Check
+1. **做什麼？** 短收尾 session，修 Gmail 登入 blocker（白名單 gate 擋人）+ Vercel auto-deploy blocker（Root Directory 未設 `web/`）。
+2. **進度？** 兩個修復完成，commit `092d745` 已 push、redeploy 成功。Production `https://frc-annotation.vercel.app` 現在應可實際登入。
+3. **下一步？** 使用者 Gmail 登入做端到端驗證（onboarding / step-up / 成員管理 / export 全流程）、建 bumper + fuels 專案；選配 Upstash + `NEXT_PUBLIC_APP_URL`。
+4. **阻礙？** 無技術 blocker。待使用者實測確認登入真的通了。
+5. **檔案？**
+   - `web/lib/auth.ts`（`signIn` callback，fallback to annotator role）
+   - `PROGRESS.md` / `FINDINGS.md` / `ERROR.md`（本次 session 紀錄）
+   - Vercel project settings（Root Directory 已透過 API 改為 `web`）
+
+---
+
 ## Session: 2026-04-17
 
 ### 主題

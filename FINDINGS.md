@@ -4,6 +4,168 @@
 
 ---
 
+## 2026-04-17 (第 3 次 session) step-up-only authz + UI 補完期技術發現
+
+### 發現 M：`ACTION_SCOPE` map 作為 per-action step-up 需求的 single source of truth
+
+**問題**：先前「哪個 action 需要哪種 step-up scope」這個意圖散在約 10 個 route file 裡，每一個都寫 `requireRole(...) + stepUpOr401(..., 'admin'|'reviewer')`。要調整某 action 的 gate（例如把 annotate 提升為需 admin step-up）要改 N 個檔案,且容易漏,沒有 bird's-eye view。
+
+**原因**：設計時用 role-based + step-up 雙閘門，每個 route 重複寫邏輯。role gate 被砍後剩 step-up gate,原本分散的結構就顯得冗餘。
+
+**解決方案**：`lib/rbac.ts` 集中：
+```ts
+type StepUpScope = 'reviewer' | 'admin';
+const ACTION_SCOPE: Partial<Record<Action, StepUpScope>> = {
+  'admin.user.create': 'admin',
+  'admin.user.list': 'admin',
+  'batch.assign': 'admin',
+  'batch.finalize': 'admin',
+  'image.approve': 'reviewer',
+  'image.reject': 'reviewer',
+  'project.create': 'admin',
+  'project.update': 'admin',
+  'project.export': 'reviewer',
+  'blob.upload': 'admin',
+  // annotate/submit 不在 map 裡 — 任何 logged-in user 皆可
+};
+
+export async function requireAuthz(session, action, request) {
+  if (!session?.user) throw new UnauthorizedError();
+  const scope = ACTION_SCOPE[action];
+  if (scope) await requireStepUp(scope, request); // 不 throw 就通過
+}
+
+export async function authzOr401(session, action, request): Promise<NextResponse | null> {
+  try { await requireAuthz(session, action, request); return null; }
+  catch (e) { /* map errors to 401/403 NextResponse */ }
+}
+```
+
+**選擇理由**：
+1. 改 gate 現在是兩行變更（map 增減一 entry + 確認 action 名稱）
+2. `Partial` 而非 full Record 是故意的 — 缺席 = 「任何已登入者」。這個設計讓「無 step-up 需求」成為預設值，對應使用者想法「只有敏感操作需要密碼」
+3. Reviewer 與 admin scope 明確寫在 map 裡,看一眼就知道「export 是 reviewer 行為、assign 是 admin 行為」
+4. 未來若要加新 scope（例如 `super-admin`）擴充 union type 即可
+
+**副作用**：`stepUpOr401` / `authzOr401` 回傳型別從 `Response` 收緊為 `NextResponse`,配合 Next.js App Router 的 route signature。
+
+---
+
+### 發現 N：next-auth `signOut` 在 server-action form 裡可零 client JS 運作
+
+**問題**：TopNav 需要 Sign out 按鈕。若寫 client component（`'use client'` + `onClick={() => signOut()}`）整個 nav 要 hydrate,且 nav 本身無其他互動,浪費。
+
+**解決方案**：server action inline 在 `<form>` 裡：
+```tsx
+<form action={async () => {
+  'use server';
+  const { signOut } = await import('@/lib/auth');
+  await signOut({ redirectTo: '/login' });
+}}>
+  <button type="submit">Sign out</button>
+</form>
+```
+
+**選擇理由**：
+1. 對應 `/login` 頁的 signIn server-action pattern — 一致性
+2. TopNav 保持 server component,session 讀取在 server 端完成,前端零 JS
+3. Next.js 16 App Router 原生支援 server-action form,signOut 在 server 端完成 cookie clearing + redirect
+4. 表單 POST + server action 天然帶 CSRF 保護（Next.js framework-level）
+
+**注意**：`lib/auth.ts` 的 `signOut` 是 Auth.js v5 export,lazy import 是為了避開 Vitest 的 `next/server` 解析問題（Finding B 已記錄）。
+
+---
+
+### 發現 O：Next.js route handler `throw Error` 在 production 會變成空 body 500
+
+**問題**：`finalize/route.ts` 原本所有失敗分支寫成 `throw Object.assign(new Error('classes.txt does not match'), { status: 400 })`。在 dev mode 有時錯誤訊息會漏到 response,production 卻一律變成 status 500 空 body。前端看到「finalize failed:」後面什麼都沒有,使用者無從 debug。
+
+**原因**：Next.js App Router route handler 的 `throw` 不會被 framework 序列化成 HTTP response。`{ status: 400 }` 掛在 Error 上對 framework 沒意義,它只看是否為 `NextResponse` / `Response` return value。
+
+**解決方案**：所有失敗分支改 `return NextResponse.json({ error: msg }, { status })` 明確回;外層包 `try { ... } catch (err) { console.error('[finalize]', batchId, status, message, err); return NextResponse.json({ error: '...' }, { status: 500 }); }` 吸未預期錯誤。Client 端 `await response.json().then(j => j.error)` 讀 detail。
+
+**選擇理由**：
+1. Next.js App Router 官方 idiom 是 return,不是 throw — 用 throw 需要外層 framework 懂得 serialize,目前沒有
+2. 顯式 return 讓 status code 與 response body 的 contract 一目了然
+3. 每個失敗路徑都自己負責 status,不被 framework 通用 500 吃掉
+4. Server-side `console.error` 還是會記完整 error 給 Vercel logs 看,但客戶端看到的是乾淨 message
+
+**遺留工作**：其他 route（`approve`、`reject`、`submit`、`assign` 等）仍用 `throw Object.assign(...)` pattern,下次碰到時一併遷移。沒列為立刻要做的項目,因為目前這些 route 的錯誤狀況使用者較少撞到。
+
+---
+
+### 發現 P：`FakeSession` / Auth.js Session 型別 drift 造成 TopNav build failure
+
+**問題**：TopNav 要顯示使用者名字,寫 `session.user.name ?? session.user.email`。TypeScript 立刻 build fail — `FakeSession`（在 `lib/auth-test.ts`）沒有 `name` 欄位。
+
+**原因**：
+1. `lib/session.ts getSession()` 不管 env 一律 cast 成 `FakeSession`（production 裡把真 `auth()` 結果也 cast 過去,只為了讓 session consumer 統一型別）
+2. 這個 cast 是為了 Vitest + next/server 相容 workaround（Finding B）— test 環境會注入 `__setFakeSession`,所以所有 session consumer 的型別都被迫符合 FakeSession
+3. 真實 Auth.js session（`DefaultSession['user']`）本來就有 `name?: string | null`,但 FakeSession 沒照抄
+
+**解決方案**：`FakeSession` 加上 optional `name?: string | null`：
+```ts
+type FakeSession = {
+  user: {
+    id: string;
+    email: string;
+    role: 'annotator' | 'admin' | 'final_reviewer';
+    name?: string | null;
+  };
+};
+```
+
+**選擇理由**：
+1. 真正乾淨的做法是 production 路徑不 cast 成 FakeSession,直接回 Auth.js 真 session type,FakeSession 只 test 路徑用。但這需要解掉 Vitest + next/server 的 lazy-import workaround（Finding B）,工作量大且無直接收益
+2. 擴充 FakeSession 是 minimum diff,跟真 session 對齊即可,0 runtime 風險
+3. 未來若有其他欄位要顯示,直接往 FakeSession 加,系統還是能跑
+
+**副作用**：FakeSession 與真 Session 的 drift 是 latent debt,任何下次要用 session 新欄位時都要手動同步,沒有 compile-time guarantee。之後若重構 `lib/session.ts`,應優先把 production 路徑的型別還原。
+
+---
+
+## 2026-04-17 (第 2 次 session) 短收尾期技術發現
+
+### 發現 L：`vercel git connect` 不寫 rootDirectory，monorepo 子目錄 Next.js 需手動透過 REST API PATCH
+
+**問題**：repo 是 `frc-train-review/` 根，Next.js 專案在 `web/` 子目錄。先前用 `vercel deploy --prod --yes` 從 `web/` 直接跑都好好的。昨晚 `vercel git connect https://github.com/0908869905/frc-train-review.git` 把 GitHub 接上後，push master 觸發的 auto-deploy 直接失敗：
+```
+Skipping build cache since Package Manager changed from "pnpm" to "npm"
+Error: No Next.js version detected. Make sure your package.json has "next" in
+either "dependencies" or "devDependencies". Also check your Root Directory
+setting matches the directory of your package.json file.
+```
+
+**原因**：
+1. CLI deploy (`vercel deploy`) 從當前目錄打包 local 檔案上傳，**不讀** Vercel project 的 `rootDirectory` 設定 — 所以之前從 `web/` 跑都 OK
+2. GitHub integration auto-deploy 走的是 Vercel 後端 clone repo + 按 project 設定走 build，`rootDirectory` 預設 `.`（repo root），在根目錄找不到 `package.json` 裡有 `next` dep
+3. `vercel git connect` 指令本身**不會**把 CLI 當前 working directory 設為 rootDirectory，這個耦合只存在於使用者心智裡、不在 CLI 行為裡
+4. 套件管理器也順便從 `pnpm` 掉成 `npm`（因為根目錄沒有 `pnpm-lock.yaml`，只有 `web/pnpm-lock.yaml`），但這是 symptom 不是 cause
+
+**解決方案**：Vercel CLI 沒提供改 rootDirectory 的子命令（`vercel project` 只有 ls/rm/add），dashboard 手動改又繁瑣。改用 REST API：
+```bash
+# token from $APPDATA/com.vercel.cli/Data/auth.json  (Windows)
+#      or  ~/.local/share/com.vercel.cli/auth.json    (Linux/Mac)
+curl -X PATCH https://api.vercel.com/v9/projects/prj_UNhDUOxcLub8TeWzrclb3zrXyzXt \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"rootDirectory":"web"}'
+```
+改完後 `vercel redeploy <failed-deployment-url> --target production` 成功，aliased 到 `frc-annotation.vercel.app`。
+
+**選擇理由**：
+- CLI 沒對應子命令，不是疏漏就是 Vercel 故意留給 dashboard（單次設定事件）
+- Dashboard 手動要登入 → 切 team → 找 project → Settings → Build & Development → Root Directory，5+ 步驟、每次要改又得重複
+- REST API 一行 curl、可自動化、可紀錄在 runbook
+- `PATCH /v9/projects/{id}` 在 Vercel docs 有明列 `rootDirectory` field
+
+**預防措施（未來 playbook）**：
+- `vercel git connect` 接完 GitHub 後**立刻** `vercel project inspect <name>` 檢查 rootDirectory 欄位
+- 若為 monorepo 子目錄結構，預設都要走 PATCH 設對，不要等 auto-deploy 壞掉才發現
+- 可考慮把這段寫進 `vercel:bootstrap` skill 的 preflight check
+
+---
+
 ## 2026-04-17 (Session) Step-up Auth 實作期技術發現
 
 ### 發現 I：Neon pooled + Prisma 7 + Vitest 的 FK 殘留 race
