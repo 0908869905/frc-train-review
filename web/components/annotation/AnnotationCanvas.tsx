@@ -107,6 +107,15 @@ export function AnnotationCanvas({
     // Pan first (middle/right button)
     if (e.evt.button === 1 || e.evt.button === 2) {
       e.evt.preventDefault();
+      // Abort any in-flight left-button drag (draw or move)
+      if (dragState.current) {
+        const wasDraw = dragState.current.kind === 'draw';
+        dragState.current = null;
+        if (wasDraw) {
+          setIsDrawing(false);
+          setDrawPreview(null);
+        }
+      }
       panState.current = {
         startX: e.evt.clientX,
         startY: e.evt.clientY,
@@ -242,6 +251,27 @@ export function AnnotationCanvas({
     const h = (e: MouseEvent) => e.preventDefault();
     el.addEventListener('contextmenu', h);
     return () => el.removeEventListener('contextmenu', h);
+  }, []);
+
+  // Self-healing drag state: if user releases mouse outside the Stage,
+  // handleMouseUp never fires. Clean up at window level instead.
+  useEffect(() => {
+    const onWindowUp = () => {
+      if (panState.current) {
+        panState.current = null;
+        setIsPanning(false);
+      }
+      if (dragState.current) {
+        const wasDraw = dragState.current.kind === 'draw';
+        dragState.current = null;
+        if (wasDraw) {
+          setIsDrawing(false);
+          setDrawPreview(null);
+        }
+      }
+    };
+    window.addEventListener('mouseup', onWindowUp);
+    return () => window.removeEventListener('mouseup', onWindowUp);
   }, []);
 
   function classColor(idx: number) {
