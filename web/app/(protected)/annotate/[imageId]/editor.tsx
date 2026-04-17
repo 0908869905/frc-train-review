@@ -7,7 +7,10 @@ import { ClassPalette } from '@/components/annotation/ClassPalette';
 import type { Box, ClassDef } from '@/components/annotation/types';
 import { Button } from '@/components/ui/button';
 import { pushUndo, popUndo } from '@/components/annotation/undo';
-import { deleteSelected } from '@/components/annotation/editor-actions';
+import {
+  changeSelectedClass,
+  deleteSelected,
+} from '@/components/annotation/editor-actions';
 
 const AnnotationCanvas = dynamic(
   () =>
@@ -146,17 +149,25 @@ export function Editor(p: Props) {
         return;
       }
 
-      // Class-shortcut (Task 2.2 will add dual action; for now: just set active).
+      // Class-shortcut: change selected box's class + set active
       const matchByShortcut = p.classes.findIndex((c) => c.shortcut === key);
       if (matchByShortcut >= 0) {
+        if (selectedId) {
+          onBoxesChange(changeSelectedClass(boxes, selectedId, matchByShortcut));
+        }
         setActiveIdx(matchByShortcut);
         return;
       }
 
-      // Numeric fallback
+      // Numeric fallback: change selected box's class + set active
       if (key >= '1' && key <= '9') {
         const idx = parseInt(key, 10) - 1;
-        if (idx < p.classes.length) setActiveIdx(idx);
+        if (idx < p.classes.length) {
+          if (selectedId) {
+            onBoxesChange(changeSelectedClass(boxes, selectedId, idx));
+          }
+          setActiveIdx(idx);
+        }
       }
     };
     window.addEventListener('keydown', handler);
