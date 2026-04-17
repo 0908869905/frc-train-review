@@ -7,10 +7,13 @@ import type Konva from 'konva';
 import type { Box, ClassDef } from './types';
 import {
   imgToDisp,
+  dispToImg,
   computeFitView,
   applyWheelZoom,
   type Viewport,
 } from './viewport';
+import { hitTestBox } from './hit-test';
+import { clampMoveNorm, commitDraw } from './editor-actions';
 
 type Props = {
   imageUrl: string;
@@ -29,15 +32,10 @@ export function AnnotationCanvas({
   boxes,
   selectedId,
   readOnly = false,
-  // The following are wired later (Phase 1.2+) — keep in destructure to silence TS.
-  activeClassIdx: _activeClassIdx,
-  onChange: _onChange,
-  onSelect: _onSelect,
+  activeClassIdx,
+  onChange,
+  onSelect,
 }: Props) {
-  void _activeClassIdx;
-  void _onChange;
-  void _onSelect;
-
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [img] = useImage(imageUrl);
   const natW = img?.naturalWidth ?? 1;
@@ -93,7 +91,20 @@ export function AnnotationCanvas({
   // Middle-click + right-click pan. Tracked via Stage listener + internal ref.
   const panState = useRef<{ startX: number; startY: number; panX: number; panY: number } | null>(null);
 
+  type DragAction =
+    | null
+    | { kind: 'move'; id: string; startImgX: number; startImgY: number; orig: Box }
+    | { kind: 'draw'; startImgX: number; startImgY: number; curImgX: number; curImgY: number };
+
+  const dragState = useRef<DragAction>(null);
+  const [drawPreview, setDrawPreview] = useState<{
+    x1: number; y1: number; x2: number; y2: number;
+  } | null>(null); // image coords
+  const [isPanning, setIsPanning] = useState(false);
+  const [isDrawing, setIsDrawing] = useState(false);
+
   function handleMouseDown(e: Konva.KonvaEventObject<MouseEvent>) {
+    // Pan first (middle/right button)
     if (e.evt.button === 1 || e.evt.button === 2) {
       e.evt.preventDefault();
       panState.current = {
@@ -102,22 +113,126 @@ export function AnnotationCanvas({
         panX: vp.pan.x,
         panY: vp.pan.y,
       };
+      setIsPanning(true);
+      return;
     }
-    // Left-click interactions are Phase 1.2+.
+    if (readOnly) return;
+    if (e.evt.button !== 0) return;
+
+    const stage = e.target.getStage();
+    const p = stage?.getPointerPosition();
+    if (!p) return;
+
+    // Priority: handle > box > empty. Handle-hit is added in Task 1.3.
+    const hitId = hitTestBox(p.x, p.y, boxes, natW, natH, vp);
+    if (hitId) {
+      onSelect(hitId);
+      const orig = boxes.find((b) => b.id === hitId);
+      if (!orig) return;
+      const { x: ix, y: iy } = dispToImg(p.x, p.y, vp);
+      dragState.current = {
+        kind: 'move',
+        id: hitId,
+        startImgX: ix,
+        startImgY: iy,
+        orig,
+      };
+      return;
+    }
+
+    // Empty: start draw. (Defer deselect to mouseup if no drag.)
+    const { x: ix, y: iy } = dispToImg(p.x, p.y, vp);
+    dragState.current = {
+      kind: 'draw',
+      startImgX: ix,
+      startImgY: iy,
+      curImgX: ix,
+      curImgY: iy,
+    };
+    setIsDrawing(true);
+    setDrawPreview({ x1: ix, y1: iy, x2: ix, y2: iy });
   }
 
   function handleMouseMove(e: Konva.KonvaEventObject<MouseEvent>) {
-    if (!panState.current) return;
-    const dx = e.evt.clientX - panState.current.startX;
-    const dy = e.evt.clientY - panState.current.startY;
-    setVp((cur) => ({
-      ...cur,
-      pan: { x: panState.current!.panX + dx, y: panState.current!.panY + dy },
-    }));
+    // Pan
+    if (panState.current) {
+      const dx = e.evt.clientX - panState.current.startX;
+      const dy = e.evt.clientY - panState.current.startY;
+      setVp((cur) => ({
+        ...cur,
+        pan: { x: panState.current!.panX + dx, y: panState.current!.panY + dy },
+      }));
+      return;
+    }
+
+    if (!dragState.current) return;
+    const stage = e.target.getStage();
+    const p = stage?.getPointerPosition();
+    if (!p) return;
+    const { x: ix, y: iy } = dispToImg(p.x, p.y, vp);
+
+    if (dragState.current.kind === 'move') {
+      const s = dragState.current;
+      const dx = (ix - s.startImgX) / natW;
+      const dy = (iy - s.startImgY) / natH;
+      const moved = clampMoveNorm({
+        ...s.orig,
+        x: s.orig.x + dx,
+        y: s.orig.y + dy,
+      });
+      onChange(boxes.map((b) => (b.id === s.id ? moved : b)));
+    } else if (dragState.current.kind === 'draw') {
+      dragState.current.curImgX = ix;
+      dragState.current.curImgY = iy;
+      setDrawPreview({
+        x1: dragState.current.startImgX,
+        y1: dragState.current.startImgY,
+        x2: ix,
+        y2: iy,
+      });
+    }
   }
 
-  function handleMouseUp() {
-    panState.current = null;
+  function handleMouseUp(e: Konva.KonvaEventObject<MouseEvent>) {
+    if (panState.current) {
+      panState.current = null;
+      setIsPanning(false);
+      return;
+    }
+    if (!dragState.current) return;
+    if (e.evt.button !== 0) return;
+
+    const action = dragState.current;
+    dragState.current = null;
+
+    if (action.kind === 'move') {
+      // Already committed in handleMouseMove; nothing to do.
+    } else if (action.kind === 'draw') {
+      setIsDrawing(false);
+      const dw = Math.abs(action.curImgX - action.startImgX);
+      const dh = Math.abs(action.curImgY - action.startImgY);
+      // < 5 image-pixel drag treated as a plain click → deselect.
+      if (dw < 5 && dh < 5) {
+        onSelect(null);
+        setDrawPreview(null);
+        return;
+      }
+      const newBox = commitDraw(
+        {
+          x1: action.startImgX,
+          y1: action.startImgY,
+          x2: action.curImgX,
+          y2: action.curImgY,
+        },
+        natW,
+        natH,
+        activeClassIdx
+      );
+      setDrawPreview(null);
+      if (!newBox) return;
+      onChange([...boxes, newBox]);
+      onSelect(newBox.id);
+    }
   }
 
   // Suppress browser context menu so right-click pan works.
@@ -170,18 +285,42 @@ export function AnnotationCanvas({
   const imgDispW = natW * vp.zoom;
   const imgDispH = natH * vp.zoom;
 
+  const [hoverBoxId, setHoverBoxId] = useState<string | null>(null);
+
+  function handleMouseMoveForHover(e: Konva.KonvaEventObject<MouseEvent>) {
+    handleMouseMove(e);
+    if (dragState.current || panState.current) return;
+    const stage = e.target.getStage();
+    const p = stage?.getPointerPosition();
+    if (!p) return;
+    const id = hitTestBox(p.x, p.y, boxes, natW, natH, vp);
+    setHoverBoxId(id);
+  }
+
+  const cursor = readOnly
+    ? isPanning
+      ? 'grabbing'
+      : 'grab'
+    : isPanning
+      ? 'grabbing'
+      : isDrawing
+        ? 'crosshair'
+        : hoverBoxId
+          ? 'move'
+          : 'crosshair';
+
   return (
     <div
       ref={containerRef}
       className="w-full h-full relative"
-      style={{ cursor: readOnly ? 'grab' : 'default' }}
+      style={{ cursor }}
     >
       <Stage
         width={containerSize.w}
         height={containerSize.h}
         onWheel={handleWheel}
         onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
+        onMouseMove={handleMouseMoveForHover}
         onMouseUp={handleMouseUp}
       >
         <Layer>
@@ -189,6 +328,27 @@ export function AnnotationCanvas({
             <KImage image={img} x={imgTL.x} y={imgTL.y} width={imgDispW} height={imgDispH} />
           )}
           {boxes.map(renderBox)}
+          {drawPreview && (() => {
+            const tl = imgToDisp(
+              Math.min(drawPreview.x1, drawPreview.x2),
+              Math.min(drawPreview.y1, drawPreview.y2),
+              vp
+            );
+            const w = Math.abs(drawPreview.x2 - drawPreview.x1) * vp.zoom;
+            const h = Math.abs(drawPreview.y2 - drawPreview.y1) * vp.zoom;
+            return (
+              <Rect
+                x={tl.x}
+                y={tl.y}
+                width={w}
+                height={h}
+                stroke="#e0b400"
+                strokeWidth={2}
+                dash={[4, 2]}
+                listening={false}
+              />
+            );
+          })()}
         </Layer>
       </Stage>
     </div>
