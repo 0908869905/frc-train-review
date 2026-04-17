@@ -5,7 +5,6 @@ import { getSession } from '@/lib/session';
 export default async function Dashboard() {
   const session = await getSession();
   if (!session) return null;
-  const role = session.user.role;
 
   const queue = await prisma.image.findMany({
     where: {
@@ -15,18 +14,15 @@ export default async function Dashboard() {
     orderBy: { updatedAt: 'asc' },
   });
 
-  const reviewableBatches =
-    role === 'final_reviewer' || role === 'admin'
-      ? await prisma.batch.findMany({
-          where: { state: 'under_review' },
-          include: {
-            project: true,
-            _count: {
-              select: { images: { where: { state: 'under_review' } } },
-            },
-          },
-        })
-      : [];
+  const reviewableBatches = await prisma.batch.findMany({
+    where: { state: 'under_review' },
+    include: {
+      project: true,
+      _count: {
+        select: { images: { where: { state: 'under_review' } } },
+      },
+    },
+  });
 
   const firstQueueId = queue[0]?.id;
 

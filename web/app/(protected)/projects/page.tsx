@@ -5,20 +5,18 @@ import { Button } from '@/components/ui/button';
 
 export default async function ProjectsPage() {
   const session = await getSession();
+  if (!session?.user?.id) return null;
   const projects = await prisma.project.findMany({
     orderBy: { createdAt: 'desc' },
   });
-  const canCreate = session?.user.role === 'admin';
 
   return (
     <main className="p-8">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold">Projects</h1>
-        {canCreate && (
-          <Link href="/projects/new">
-            <Button>New Project</Button>
-          </Link>
-        )}
+        <Link href="/projects/new">
+          <Button>New Project</Button>
+        </Link>
       </div>
       <ul className="space-y-2">
         {projects.map((p) => (

@@ -7,14 +7,6 @@ export default async function ReviewHomePage() {
   if (!session?.user?.id) {
     return null;
   }
-  const role = session.user.role;
-  if (role !== 'admin' && role !== 'final_reviewer') {
-    return (
-      <main className="p-8">
-        <p className="text-sm text-neutral-500">僅覆核者 / 管理員可進入。</p>
-      </main>
-    );
-  }
 
   const completed = await prisma.batch.findMany({
     where: { state: 'completed' },

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { zipSync, strToU8 } from 'fflate';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
-import { stepUpOr401 } from '@/lib/rbac';
+import { authzOr401 } from '@/lib/rbac';
 import { serializeYoloLabel } from '@/lib/yolo';
 
 export async function GET(
@@ -10,11 +10,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await getSession();
-  const role = session?.user.role;
-  if (role !== 'admin' && role !== 'final_reviewer') {
-    return NextResponse.json({ error: 'forbidden' }, { status: 403 });
-  }
-  const denial = stepUpOr401(session, 'reviewer', req);
+  const denial = authzOr401(session, 'export.download', req);
   if (denial) return denial;
   const { id } = await params;
 

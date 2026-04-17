@@ -1,13 +1,14 @@
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 import { NextResponse } from 'next/server';
 import { getSession } from '@/lib/session';
-import { requireRole } from '@/lib/rbac';
+import { authzOr401 } from '@/lib/rbac';
 import { prisma } from '@/lib/db';
 
 export async function POST(req: Request): Promise<NextResponse> {
   const body = (await req.json()) as HandleUploadBody;
   const session = await getSession();
-  requireRole(session?.user.role, 'batch.upload');
+  const denial = authzOr401(session, 'batch.upload', req);
+  if (denial) return denial;
 
   try {
     const jsonResponse = await handleUpload({

@@ -22,18 +22,17 @@ export function StepUpDialog({
   const [err, setErr] = useState<string | null>(null);
   const [lockedUntil, setLockedUntil] = useState<number | null>(null);
 
-  // Auto-clear lock when the retry window elapses, so the form re-enables
-  // without requiring a page refresh.
+  // Auto-clear lock when the retry window elapses so the form re-enables
+  // without a page refresh. While lockedUntil is set, the form is locked;
+  // the effect is the sole owner of clearing it.
   useEffect(() => {
     if (lockedUntil === null) return;
     const ms = lockedUntil - Date.now();
-    if (ms <= 0) {
-      setLockedUntil(null);
-      return;
-    }
-    const t = setTimeout(() => setLockedUntil(null), ms);
+    const t = setTimeout(() => setLockedUntil(null), Math.max(ms, 0));
     return () => clearTimeout(t);
   }, [lockedUntil]);
+
+  const locked = lockedUntil !== null;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -58,8 +57,6 @@ export function StepUpDialog({
     }
     setErr('密碼錯誤');
   }
-
-  const locked = lockedUntil !== null && Date.now() < lockedUntil;
 
   return (
     // Suppress close events: step-up is a gate, no escape/backdrop dismissal.

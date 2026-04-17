@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
-import { requireRole, stepUpOr401 } from '@/lib/rbac';
+import { authzOr401 } from '@/lib/rbac';
 import { writeAudit } from '@/lib/audit';
 
 const Body = z.object({
@@ -21,8 +21,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await getSession();
-  requireRole(session?.user.role, 'batch.assign');
-  const denial = stepUpOr401(session, 'admin', req);
+  const denial = authzOr401(session, 'batch.assign', req);
   if (denial) return denial;
   const { id: batchId } = await params;
   const body = Body.parse(await req.json());
@@ -35,8 +34,8 @@ export async function POST(
       throw Object.assign(new Error('Unknown annotator'), { status: 400 });
     }
     for (const u of users) {
-      if (u.role !== 'annotator' && u.role !== 'admin') {
-        throw Object.assign(new Error(`${u.email} is not an annotator`), {
+      if (!u.isActive) {
+        throw Object.assign(new Error(`${u.email} is not active`), {
           status: 400,
         });
       }

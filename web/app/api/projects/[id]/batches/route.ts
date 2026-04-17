@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
-import { requireRole } from '@/lib/rbac';
+import { authzOr401 } from '@/lib/rbac';
 
 const InitBody = z.object({
   name: z.string().min(1).max(128),
@@ -14,7 +14,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await getSession();
-  requireRole(session?.user.role, 'batch.upload');
+  const denial = authzOr401(session, 'batch.upload', req);
+  if (denial) return denial;
   const { id: projectId } = await params;
 
   const body = InitBody.parse(await req.json());

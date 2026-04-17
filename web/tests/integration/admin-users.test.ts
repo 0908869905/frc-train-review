@@ -45,10 +45,17 @@ describe('POST /api/admin/users', () => {
     expect(row?.role).toBe('annotator');
   });
 
-  it('rejects non-admin with 403', async () => {
+  it('rejects caller whose session id does not match step-up cookie userId', async () => {
     const { __setFakeSession } = await import('@/lib/auth-test');
+    // session userId differs from the cookie's userId => cookie does not
+    // authorise this caller (prevents cookie replay across accounts)
     __setFakeSession({
       user: { id: 'not-admin', email: 'b@test', role: 'annotator' },
+    });
+    await prisma.user.upsert({
+      where: { email: 'b@test' },
+      update: {},
+      create: { id: 'not-admin', email: 'b@test', role: 'annotator' },
     });
     const { POST } = await import('@/app/api/admin/users/route');
     const req = new Request('http://x/api/admin/users', {
@@ -59,6 +66,7 @@ describe('POST /api/admin/users', () => {
       },
       body: JSON.stringify({ email: 'x@y.z', role: 'annotator' }),
     });
-    await expect(POST(req)).rejects.toMatchObject({ status: 403 });
+    const res = await POST(req);
+    expect(res.status).toBe(401);
   });
 });

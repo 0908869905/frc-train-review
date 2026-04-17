@@ -1,6 +1,5 @@
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
-import { requireRole } from '@/lib/rbac';
 import { ReviewTray } from './review-tray';
 import { notFound } from 'next/navigation';
 
@@ -10,7 +9,7 @@ export default async function ReviewBatchPage({
   params: Promise<{ batchId: string }>;
 }) {
   const session = await getSession();
-  requireRole(session?.user.role, 'image.approve');
+  if (!session?.user?.id) return null;
   const { batchId } = await params;
 
   const batch = await prisma.batch.findUnique({

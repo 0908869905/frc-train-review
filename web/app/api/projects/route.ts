@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
-import { requireRole } from '@/lib/rbac';
+import { authzOr401 } from '@/lib/rbac';
 
 const ClassDef = z.object({
   idx: z.number().int().min(0),
@@ -40,7 +40,8 @@ export async function GET() {
 
 export async function POST(req: Request) {
   const session = await getSession();
-  requireRole(session?.user.role, 'project.create');
+  const denial = authzOr401(session, 'project.create', req);
+  if (denial) return denial;
   const body = PostBody.parse(await req.json());
   const p = await prisma.project.create({
     data: {

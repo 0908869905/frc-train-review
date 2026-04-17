@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
-import { requireRole, stepUpOr401 } from '@/lib/rbac';
+import { authzOr401 } from '@/lib/rbac';
 
 const PostBody = z.object({
   email: z.email(),
@@ -11,8 +11,7 @@ const PostBody = z.object({
 
 export async function GET(req: Request) {
   const session = await getSession();
-  requireRole(session?.user.role, 'whitelist.manage');
-  const denial = stepUpOr401(session, 'admin', req);
+  const denial = authzOr401(session, 'whitelist.manage', req);
   if (denial) return denial;
   const rows = await prisma.emailWhitelist.findMany({
     orderBy: { addedAt: 'asc' },
@@ -22,8 +21,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   const session = await getSession();
-  requireRole(session?.user.role, 'whitelist.manage');
-  const denial = stepUpOr401(session, 'admin', req);
+  const denial = authzOr401(session, 'whitelist.manage', req);
   if (denial) return denial;
   const body = PostBody.parse(await req.json());
   const row = await prisma.emailWhitelist.upsert({

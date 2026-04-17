@@ -1,17 +1,29 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { prisma } from '@/lib/db';
 import { __setFakeSession } from '@/lib/auth-test';
+import { signStepUpCookie, stepUpCookieName } from '@/lib/stepup';
+
+const ADMIN_ID = 'u-admin';
+let adminCookie: string;
 
 async function adminSession() {
   await prisma.user.upsert({
     where: { email: 'admin@t' },
     update: {},
-    create: { id: 'u-admin', email: 'admin@t', role: 'admin' },
+    create: { id: ADMIN_ID, email: 'admin@t', role: 'admin' },
   });
   __setFakeSession({
-    user: { id: 'u-admin', email: 'admin@t', role: 'admin' },
+    user: { id: ADMIN_ID, email: 'admin@t', role: 'admin' },
   });
 }
+
+beforeAll(() => {
+  process.env.AUTH_SECRET = 'test-secret-min-32-chars-please';
+  adminCookie = `${stepUpCookieName('admin')}=${signStepUpCookie({
+    userId: ADMIN_ID,
+    scope: 'admin',
+  })}`;
+});
 
 describe('POST /api/projects', () => {
   beforeEach(async () => {
@@ -29,7 +41,10 @@ describe('POST /api/projects', () => {
     const { POST } = await import('@/app/api/projects/route');
     const req = new Request('http://x/api/projects', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        cookie: adminCookie,
+      },
       body: JSON.stringify({
         name: 'coral-detector-2026',
         description: 'on-robot coral detection',
@@ -46,17 +61,15 @@ describe('POST /api/projects', () => {
     expect(list[0].name).toBe('coral-detector-2026');
   });
 
-  it('rejects non-admin', async () => {
-    __setFakeSession({
-      user: { id: 'u-admin', email: 'admin@t', role: 'annotator' },
-    });
+  it('rejects caller without admin step-up', async () => {
     const { POST } = await import('@/app/api/projects/route');
     const req = new Request('http://x/api/projects', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ name: 'x', classes: [] }),
     });
-    await expect(POST(req)).rejects.toMatchObject({ status: 403 });
+    const res = await POST(req);
+    expect(res.status).toBe(401);
   });
 });
 
@@ -82,7 +95,10 @@ describe('PATCH /api/projects/[id]', () => {
     const { PATCH } = await import('@/app/api/projects/[id]/route');
     const req = new Request(`http://x/api/projects/${p.id}`, {
       method: 'PATCH',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        cookie: adminCookie,
+      },
       body: JSON.stringify({
         name: 'new',
         classes: [

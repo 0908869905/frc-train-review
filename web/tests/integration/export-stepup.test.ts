@@ -94,13 +94,13 @@ describe('GET /api/projects/[id]/export — scope relaxation + step-up', () => {
     expect(res.status).toBe(200);
   });
 
-  it('403 as annotator even with reviewer cookie', async () => {
+  it('200 as any logged-in user with reviewer cookie (role is no longer a gate)', async () => {
     __setFakeSession({ user: { id: annotatorId, email: 'n@t.com', role: 'annotator' } });
     const c = signStepUpCookie({ userId: annotatorId, scope: 'reviewer' });
     const res = await GET(makeReq(`${stepUpCookieName('reviewer')}=${c}`), {
       params: Promise.resolve({ id: projectId }),
     });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
   });
 
   it('401 as final_reviewer with admin cookie (wrong scope)', async () => {

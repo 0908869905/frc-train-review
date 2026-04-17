@@ -1,5 +1,5 @@
 import { getSession } from '@/lib/session';
-import { requireRole } from '@/lib/rbac';
+import { StepUpGuard } from '@/components/step-up-guard';
 import { BatchUploader } from './batch-uploader';
 
 export default async function UploadPage({
@@ -8,12 +8,14 @@ export default async function UploadPage({
   params: Promise<{ id: string }>;
 }) {
   const session = await getSession();
-  requireRole(session?.user.role, 'batch.upload');
+  if (!session?.user?.id) return null;
   const { id } = await params;
   return (
-    <main className="p-8">
-      <h1 className="text-2xl font-bold mb-6">Upload Batch</h1>
-      <BatchUploader projectId={id} />
-    </main>
+    <StepUpGuard scope="admin">
+      <main className="p-8">
+        <h1 className="text-2xl font-bold mb-6">Upload Batch</h1>
+        <BatchUploader projectId={id} />
+      </main>
+    </StepUpGuard>
   );
 }

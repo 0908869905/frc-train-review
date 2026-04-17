@@ -11,18 +11,23 @@ export function StepUpGuard({
 }) {
   const [state, setState] = useState<'checking' | 'granted' | 'required'>('checking');
 
-  async function check() {
-    const res = await fetch(`/api/auth/step-up?scope=${scope}`, { cache: 'no-store' });
-    if (res.status === 401) {
-      window.location.href = '/login';
-      return;
-    }
-    const j = await res.json().catch(() => ({ granted: false }));
-    setState(j.granted ? 'granted' : 'required');
-  }
-
   useEffect(() => {
-    check();
+    let cancelled = false;
+    (async () => {
+      const res = await fetch(`/api/auth/step-up?scope=${scope}`, {
+        cache: 'no-store',
+      });
+      if (res.status === 401) {
+        window.location.href = '/login';
+        return;
+      }
+      const j = await res.json().catch(() => ({ granted: false }));
+      if (cancelled) return;
+      setState(j.granted ? 'granted' : 'required');
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [scope]);
 
   if (state === 'checking') {

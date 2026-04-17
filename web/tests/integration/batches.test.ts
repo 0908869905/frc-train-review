@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { zipSync, strToU8 } from 'fflate';
 import { prisma } from '@/lib/db';
 import { __setFakeSession } from '@/lib/auth-test';
+import { signStepUpCookie, stepUpCookieName } from '@/lib/stepup';
 
 vi.mock('@vercel/blob', () => ({
   put: vi.fn(async (key: string) => ({
@@ -12,6 +13,16 @@ vi.mock('@vercel/blob', () => ({
 }));
 
 describe('POST /api/batches/[id]/finalize', () => {
+  let adminCookie: string;
+
+  beforeAll(() => {
+    process.env.AUTH_SECRET = 'test-secret-min-32-chars-please';
+    adminCookie = `${stepUpCookieName('admin')}=${signStepUpCookie({
+      userId: 'u-admin',
+      scope: 'admin',
+    })}`;
+  });
+
   beforeEach(async () => {
     vi.restoreAllMocks();
     await prisma.auditLog.deleteMany();
@@ -63,7 +74,10 @@ describe('POST /api/batches/[id]/finalize', () => {
     const { POST } = await import('@/app/api/batches/[id]/finalize/route');
     const req = new Request('http://x', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        cookie: adminCookie,
+      },
       body: JSON.stringify({
         zipUrl: 'https://test-tenant.public.blob.vercel-storage.com/zip',
       }),

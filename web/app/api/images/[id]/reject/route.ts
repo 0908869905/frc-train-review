@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
-import { requireRole } from '@/lib/rbac';
+import { authzOr401 } from '@/lib/rbac';
 import { nextState } from '@/lib/state-machine';
 import { writeAudit } from '@/lib/audit';
 
@@ -13,7 +13,8 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await getSession();
-  requireRole(session?.user.role, 'image.reject');
+  const denial = authzOr401(session, 'image.reject', req);
+  if (denial) return denial;
   const { id } = await params;
   const body = Body.parse(await req.json());
 

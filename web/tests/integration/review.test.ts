@@ -1,9 +1,19 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach } from 'vitest';
 import { prisma } from '@/lib/db';
 import { __setFakeSession } from '@/lib/auth-test';
+import { signStepUpCookie, stepUpCookieName } from '@/lib/stepup';
 
 describe('review flow', () => {
   let imageId: string;
+  let reviewerCookie: string;
+
+  beforeAll(() => {
+    process.env.AUTH_SECRET = 'test-secret-min-32-chars-please';
+    reviewerCookie = `${stepUpCookieName('reviewer')}=${signStepUpCookie({
+      userId: 'eve',
+      scope: 'reviewer',
+    })}`;
+  });
 
   beforeEach(async () => {
     await prisma.auditLog.deleteMany();
@@ -49,9 +59,13 @@ describe('review flow', () => {
 
   it('approves', async () => {
     const { POST } = await import('@/app/api/images/[id]/approve/route');
-    const res = await POST(new Request('http://x', { method: 'POST' }), {
-      params: Promise.resolve({ id: imageId }),
-    });
+    const res = await POST(
+      new Request('http://x', {
+        method: 'POST',
+        headers: { cookie: reviewerCookie },
+      }),
+      { params: Promise.resolve({ id: imageId }) },
+    );
     expect(res.status).toBe(200);
     const img = await prisma.image.findUniqueOrThrow({
       where: { id: imageId },
@@ -64,7 +78,10 @@ describe('review flow', () => {
     const res = await POST(
       new Request('http://x', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: {
+          'content-type': 'application/json',
+          cookie: reviewerCookie,
+        },
         body: JSON.stringify({ comment: 'box too big' }),
       }),
       { params: Promise.resolve({ id: imageId }) },
@@ -84,7 +101,10 @@ describe('review flow', () => {
       POST(
         new Request('http://x', {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: {
+            'content-type': 'application/json',
+            cookie: reviewerCookie,
+          },
           body: '{}',
         }),
         { params: Promise.resolve({ id: imageId }) },
@@ -92,15 +112,14 @@ describe('review flow', () => {
     ).rejects.toThrow();
   });
 
-  it('annotator cannot approve', async () => {
+  it('caller without reviewer step-up cannot approve', async () => {
     __setFakeSession({
       user: { id: 'alice', email: 'a@t', role: 'annotator' },
     });
     const { POST } = await import('@/app/api/images/[id]/approve/route');
-    await expect(
-      POST(new Request('http://x', { method: 'POST' }), {
-        params: Promise.resolve({ id: imageId }),
-      }),
-    ).rejects.toMatchObject({ status: 403 });
+    const res = await POST(new Request('http://x', { method: 'POST' }), {
+      params: Promise.resolve({ id: imageId }),
+    });
+    expect(res.status).toBe(401);
   });
 });

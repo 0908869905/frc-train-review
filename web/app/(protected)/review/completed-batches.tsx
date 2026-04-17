@@ -12,6 +12,10 @@ export function CompletedBatches({
   }[];
 }) {
   function download(projectId: string) {
+    // Direct navigation is the right call here — the response is a zip
+    // Content-Disposition=attachment, which the browser downloads instead of
+    // navigating to. router.push() can't stream binary downloads.
+    // eslint-disable-next-line react-hooks/immutability
     window.location.href = `/api/projects/${projectId}/export`;
   }
   if (items.length === 0) {

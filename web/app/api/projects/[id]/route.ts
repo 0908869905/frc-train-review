@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
-import { requireRole } from '@/lib/rbac';
+import { authzOr401 } from '@/lib/rbac';
 
 const ClassDef = z.object({
   idx: z.number().int().min(0),
@@ -46,7 +46,8 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const session = await getSession();
-  requireRole(session?.user.role, 'project.update');
+  const denial = authzOr401(session, 'project.update', req);
+  if (denial) return denial;
   const { id } = await params;
   const body = PatchBody.parse(await req.json());
   const p = await prisma.project.update({ where: { id }, data: body });

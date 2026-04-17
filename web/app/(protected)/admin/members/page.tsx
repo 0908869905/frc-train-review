@@ -1,11 +1,10 @@
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
-import { requireRole } from '@/lib/rbac';
 import { MembersActions } from './members-actions';
 
 export default async function MembersPage() {
   const session = await getSession();
-  requireRole(session?.user.role, 'whitelist.manage');
+  if (!session?.user?.id) return null;
 
   const whitelist = await prisma.emailWhitelist.findMany({
     orderBy: { addedAt: 'asc' },
