@@ -5,7 +5,8 @@ import { signOut } from '@/lib/auth';
 export async function TopNav() {
   const session = await getSession();
   const role = session?.user?.role;
-  const canSeeProjects = role === 'admin' || role === 'final_reviewer';
+  const isAdmin = role === 'admin';
+  const canReview = isAdmin || role === 'final_reviewer';
   return (
     <header className="border-b border-neutral-200 bg-white">
       <div className="flex items-center justify-between px-6 py-3">
@@ -16,12 +17,28 @@ export async function TopNav() {
           <Link href="/" className="text-neutral-600 hover:text-neutral-900">
             Dashboard
           </Link>
-          {canSeeProjects && (
+          {canReview && (
             <Link
               href="/projects"
               className="text-neutral-600 hover:text-neutral-900"
             >
               Projects
+            </Link>
+          )}
+          {canReview && (
+            <Link
+              href="/review"
+              className="text-neutral-600 hover:text-neutral-900"
+            >
+              Review
+            </Link>
+          )}
+          {isAdmin && (
+            <Link
+              href="/admin"
+              className="text-neutral-600 hover:text-neutral-900"
+            >
+              Admin
             </Link>
           )}
         </nav>
