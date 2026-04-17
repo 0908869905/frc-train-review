@@ -61,17 +61,37 @@ export function Editor(p: Props) {
 
   const currentIdx = p.queueIds.indexOf(p.imageId);
   const nextId = p.queueIds[currentIdx + 1];
+  const prevId = p.queueIds[currentIdx - 1]; // undefined at index 0
 
+  // Ref to latest boxes for flush. Stays in sync via effect.
+  const boxesRef = useRef(boxes);
   useEffect(() => {
-    if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(async () => {
-      setStatus('saving...');
+    boxesRef.current = boxes;
+  }, [boxes]);
+
+  const updatedAtRef = useRef(updatedAt);
+  useEffect(() => {
+    updatedAtRef.current = updatedAt;
+  }, [updatedAt]);
+
+  const saveInFlight = useRef(false);
+  const pendingDirty = useRef(false);
+
+  // Perform the save; return whether we ended up with all pending changes persisted.
+  const doSave = useCallback(async (): Promise<boolean> => {
+    if (saveInFlight.current) {
+      pendingDirty.current = true;
+      return true;
+    }
+    saveInFlight.current = true;
+    setStatus('saving...');
+    try {
       const res = await fetch(`/api/images/${p.imageId}/annotations`, {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          lastKnownUpdatedAt: updatedAt,
-          boxes: boxes.map((b) => ({
+          lastKnownUpdatedAt: updatedAtRef.current,
+          boxes: boxesRef.current.map((b) => ({
             classIdx: b.classIdx,
             x: b.x,
             y: b.y,
@@ -84,17 +104,38 @@ export function Editor(p: Props) {
         const json = await res.json();
         setUpdatedAt(json.updatedAt);
         setStatus('saved');
-      } else {
-        setStatus('save failed');
+        return true;
       }
+      setStatus('save failed');
+      return false;
+    } finally {
+      saveInFlight.current = false;
+    }
+  }, [p.imageId]);
+
+  // Debounced auto-save (2s) — replaces the old inline useEffect.
+  useEffect(() => {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => {
+      doSave();
     }, 2000);
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boxes]);
+  }, [boxes, doSave]);
+
+  // Flush: cancel pending debounce and save immediately. Returns true if persisted.
+  const flushSave = useCallback(async (): Promise<boolean> => {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    return await doSave();
+  }, [doSave]);
 
   const submit = useCallback(async () => {
+    const ok = await flushSave();
+    if (!ok) return;
     setStatus('submitting...');
     const res = await fetch(`/api/images/${p.imageId}/submit`, {
       method: 'POST',
@@ -105,7 +146,20 @@ export function Editor(p: Props) {
     } else {
       setStatus('submit failed');
     }
-  }, [p.imageId, nextId, router]);
+  }, [p.imageId, nextId, router, flushSave]);
+
+  // Best-effort flush on unmount (page close, route away outside ←/→).
+  useEffect(() => {
+    return () => {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
+      // Fire-and-forget; we can't await here.
+      doSave();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -173,6 +227,23 @@ export function Editor(p: Props) {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [submit, p.classes, selectedId, boxes, onBoxesChange]);
+
+  // ←/→ nav: flush save then navigate.
+  useEffect(() => {
+    const handler = async (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      const targetId = e.key === 'ArrowLeft' ? prevId : nextId;
+      if (!targetId) return;
+      e.preventDefault();
+      const ok = await flushSave();
+      if (!ok) return;
+      router.push(`/annotate/${targetId}`);
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [prevId, nextId, flushSave, router]);
 
   useEffect(() => {
     const nextIds = p.queueIds.slice(currentIdx + 1, currentIdx + 6);
