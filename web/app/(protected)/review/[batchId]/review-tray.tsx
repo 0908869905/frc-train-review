@@ -24,6 +24,15 @@ const AnnotationCanvas = dynamic(
 
 type ReviewImage = { id: string; imageUrl: string; boxes: Box[] };
 
+const REJECT_PRESETS = [
+  '菜就多練',
+  '邊框沒框好',
+  '沒框',
+  '少框機器人',
+  '少框 fuels',
+] as const;
+const OTHER = '其他';
+
 export function ReviewTray({
   batchName,
   projectName,
@@ -38,7 +47,8 @@ export function ReviewTray({
   const router = useRouter();
   const [idx, setIdx] = useState(0);
   const [rejectOpen, setRejectOpen] = useState(false);
-  const [rejectComment, setRejectComment] = useState('');
+  const [rejectChoice, setRejectChoice] = useState<string>('');
+  const [rejectOther, setRejectOther] = useState('');
 
   const current = images[idx];
 
@@ -56,16 +66,21 @@ export function ReviewTray({
   }, [current, next]);
 
   const openReject = useCallback(() => {
-    setRejectComment('');
+    setRejectChoice('');
+    setRejectOther('');
     setRejectOpen(true);
   }, []);
 
+  const finalComment =
+    rejectChoice === OTHER ? rejectOther.trim() : rejectChoice;
+  const canConfirm = finalComment.length > 0;
+
   async function confirmReject() {
-    if (!current || !rejectComment.trim()) return;
+    if (!current || !canConfirm) return;
     const res = await fetch(`/api/images/${current.id}/reject`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ comment: rejectComment }),
+      body: JSON.stringify({ comment: finalComment }),
     });
     if (res.ok) {
       setRejectOpen(false);
@@ -122,22 +137,40 @@ export function ReviewTray({
       <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Reject with comment</DialogTitle>
+            <DialogTitle>退回原因</DialogTitle>
           </DialogHeader>
-          <Textarea
-            value={rejectComment}
-            onChange={(e) => setRejectComment(e.target.value)}
-            placeholder="Why reject? (required)"
-          />
+          <div className="space-y-2">
+            {[...REJECT_PRESETS, OTHER].map((label) => (
+              <label
+                key={label}
+                className="flex items-center gap-2 rounded border border-neutral-200 px-3 py-2 text-sm cursor-pointer hover:bg-neutral-50 has-[:checked]:border-neutral-900 has-[:checked]:bg-neutral-50"
+              >
+                <input
+                  type="radio"
+                  name="reject-reason"
+                  value={label}
+                  checked={rejectChoice === label}
+                  onChange={() => setRejectChoice(label)}
+                  className="accent-neutral-900"
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+            {rejectChoice === OTHER && (
+              <Textarea
+                value={rejectOther}
+                onChange={(e) => setRejectOther(e.target.value)}
+                placeholder="請填寫退回原因"
+                autoFocus
+              />
+            )}
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setRejectOpen(false)}>
-              Cancel
+              取消
             </Button>
-            <Button
-              onClick={confirmReject}
-              disabled={!rejectComment.trim()}
-            >
-              Confirm reject
+            <Button onClick={confirmReject} disabled={!canConfirm}>
+              確認退回
             </Button>
           </DialogFooter>
         </DialogContent>
