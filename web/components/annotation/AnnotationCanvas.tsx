@@ -88,6 +88,25 @@ export function AnnotationCanvas({
     return () => window.removeEventListener('keydown', handler);
   }, [img, natW, natH, containerSize.w, containerSize.h]);
 
+  // Esc key → cancel in-progress draw.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (!dragState.current) return;
+      // Cancel in-progress draw. (Move/resize will get full revert in Task 2.1
+      // when shadowBox is introduced — in Task 1.4 they already committed
+      // frame-by-frame, so Esc just stops further progression.)
+      const wasDraw = dragState.current.kind === 'draw';
+      dragState.current = null;
+      if (wasDraw) {
+        setIsDrawing(false);
+        setDrawPreview(null);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, []);
+
   // Wheel zoom (cursor-centered).
   function handleWheel(e: Konva.KonvaEventObject<WheelEvent>) {
     e.evt.preventDefault();
