@@ -168,6 +168,98 @@ def pick_images() -> list[dict]:
     return result
 
 
+async def annotate_one_to_file(
+    client,
+    model: str,
+    img_path: Path,
+    out_label_dir: Path,
+    sem: asyncio.Semaphore,
+) -> dict:
+    """Annotate one image with given model, save YOLO labels to out_label_dir.
+
+    Returns {"stem": str, "model": str, "status": "done"|"error:...",
+             "n_red": int, "n_blue": int, "n_fuel": int}.
+    """
+    stem = img_path.stem
+    async with sem:
+        try:
+            jpeg_bytes, _ow, _oh = await asyncio.to_thread(prep_image_bytes, img_path)
+            last_err = None
+            for attempt in range(4):
+                try:
+                    img_part = types.Part.from_bytes(
+                        data=jpeg_bytes, mime_type="image/jpeg")
+                    resp = await asyncio.to_thread(
+                        client.models.generate_content,
+                        model=model,
+                        contents=[img_part, _PROMPT],
+                        config=types.GenerateContentConfig(
+                            temperature=0.1,
+                            response_mime_type="application/json",
+                            response_schema=_RESPONSE_SCHEMA,
+                        ),
+                    )
+                    text = resp.text or "[]"
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError:
+                        import re
+                        m = re.search(r"\[.*\]", text, re.DOTALL)
+                        data = json.loads(m.group()) if m else []
+                    if not isinstance(data, list):
+                        data = []
+                    labels = to_yolo(data)
+                    out_path = out_label_dir / f"{stem}.txt"
+                    save_yolo_labels(out_path, labels)
+                    nr = sum(1 for l in labels if l[0] == CLASS_IDX["red_robot"])
+                    nb = sum(1 for l in labels if l[0] == CLASS_IDX["blue_robot"])
+                    nf = sum(1 for l in labels if l[0] == CLASS_IDX["fuel"])
+                    return {"stem": stem, "model": model, "status": "done",
+                            "n_red": nr, "n_blue": nb, "n_fuel": nf}
+                except Exception as e:
+                    last_err = e
+                    msg = str(e)
+                    if "429" in msg or "RESOURCE_EXHAUSTED" in msg or "503" in msg:
+                        wait = 5 * (2 ** attempt)
+                        print(f"  [retry] {stem}/{model} attempt {attempt+1} after {wait}s: {msg[:60]}")
+                        await asyncio.sleep(wait)
+                        continue
+                    else:
+                        break
+            return {"stem": stem, "model": model,
+                    "status": f"error: {last_err}",
+                    "n_red": 0, "n_blue": 0, "n_fuel": 0}
+        except Exception as e:
+            return {"stem": stem, "model": model,
+                    "status": f"error: {e}",
+                    "n_red": 0, "n_blue": 0, "n_fuel": 0}
+
+
+async def run_annotations(picked: list[dict]) -> list[dict]:
+    """Fire 12 concurrent calls (6 imgs x 2 models), return all results."""
+    OUT_LABELS_PRO.mkdir(parents=True, exist_ok=True)
+    OUT_LABELS_LITE.mkdir(parents=True, exist_ok=True)
+    client = build_gemini_client()
+    sem = asyncio.Semaphore(CONCURRENCY)
+
+    tasks = []
+    for entry in picked:
+        img = OUT_IMAGES / f"{entry['stem']}.jpg"
+        tasks.append(annotate_one_to_file(client, MODEL_PRO, img, OUT_LABELS_PRO, sem))
+        tasks.append(annotate_one_to_file(client, MODEL_LITE, img, OUT_LABELS_LITE, sem))
+
+    t0 = time.time()
+    results = await asyncio.gather(*tasks)
+    elapsed = time.time() - t0
+    print(f"  完成 {len(results)} 次 API 呼叫，耗時 {elapsed:.1f}s")
+
+    # Print error rows inline
+    for r in results:
+        if r["status"] != "done":
+            print(f"  [FAIL] {r['stem']} via {r['model']}: {r['status']}")
+    return results
+
+
 def main():
     print("Gemini 3.1 Pro vs Flash Lite compare experiment")
     print("=" * 60)
@@ -193,6 +285,10 @@ def main():
         encoding="utf-8",
     )
     print(f"manifest -> {MANIFEST_PATH}")
+
+    # Stage 2: 雙模型並行標註
+    print("\n[Stage 2] 雙模型並行標註")
+    anno_results = asyncio.run(run_annotations(picked))
 
 
 if __name__ == "__main__":
