@@ -36,6 +36,16 @@ export default async function ProjectHome({
     where: { batch: { projectId: id }, state: 'approved' },
   });
 
+  const classCountsRaw = await prisma.annotation.groupBy({
+    by: ['classIdx'],
+    where: { image: { batch: { projectId: id } } },
+    _count: { _all: true },
+  });
+  const classCounts = new Map<number, number>();
+  for (const row of classCountsRaw) {
+    classCounts.set(row.classIdx, row._count._all);
+  }
+
   return (
     <main className="p-8">
       <div className="flex items-start justify-between mb-2">
@@ -64,7 +74,12 @@ export default async function ProjectHome({
                 className="w-3 h-3 rounded-full"
                 style={{ backgroundColor: c.color }}
               />
-              {c.idx}: {c.name}
+              <span>
+                {c.idx}: {c.name}
+              </span>
+              <span className="tabular-nums text-gray-500">
+                × {classCounts.get(c.idx) ?? 0}
+              </span>
             </span>
           ))}
         </div>
