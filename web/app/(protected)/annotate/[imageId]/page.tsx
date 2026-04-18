@@ -30,7 +30,7 @@ export default async function AnnotatePage({
       state: { in: ['assigned', 'needs_rework', 'annotated'] },
     },
     orderBy: [{ batchId: 'asc' }, { id: 'asc' }],
-    select: { id: true },
+    select: { id: true, state: true },
   });
 
   const classes = image.batch.project.classes as Array<{
@@ -55,7 +55,7 @@ export default async function AnnotatePage({
         source: a.source as 'gemini' | 'human',
       }))}
       initialUpdatedAt={image.updatedAt.toISOString()}
-      queueIds={queue.map((q) => q.id)}
+      queueItems={queue.map((q) => ({ id: q.id, state: q.state }))}
       batchName={image.batch.name}
       projectName={image.batch.project.name}
     />

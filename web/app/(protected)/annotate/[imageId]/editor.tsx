@@ -20,6 +20,11 @@ const AnnotationCanvas = dynamic(
   { ssr: false },
 );
 
+type QueueItem = {
+  id: string;
+  state: 'assigned' | 'needs_rework' | 'annotated' | string;
+};
+
 type Props = {
   imageId: string;
   imageUrl: string;
@@ -27,7 +32,7 @@ type Props = {
   classes: ClassDef[];
   initialBoxes: Box[];
   initialUpdatedAt: string;
-  queueIds: string[];
+  queueItems: QueueItem[];
   batchName: string;
   projectName: string;
 };
@@ -61,9 +66,9 @@ export function Editor(p: Props) {
     setSelectedId(null);
   }, [p.imageId]);
 
-  const currentIdx = p.queueIds.indexOf(p.imageId);
-  const nextId = p.queueIds[currentIdx + 1];
-  const prevId = p.queueIds[currentIdx - 1]; // undefined at index 0
+  const currentIdx = p.queueItems.findIndex((q) => q.id === p.imageId);
+  const nextId = p.queueItems[currentIdx + 1]?.id;
+  const prevId = p.queueItems[currentIdx - 1]?.id; // undefined at index 0
 
   // Ref to latest boxes for flush. Stays in sync via effect.
   const boxesRef = useRef(boxes);
@@ -292,6 +297,16 @@ export function Editor(p: Props) {
     return () => window.removeEventListener('keydown', handler);
   }, [submit, p.classes, selectedId, boxes, onBoxesChange]);
 
+  const navTo = useCallback(
+    async (targetId: string) => {
+      if (!targetId || targetId === p.imageId) return;
+      const ok = await flushSave();
+      if (!ok) return;
+      router.push(`/annotate/${targetId}`);
+    },
+    [p.imageId, flushSave, router],
+  );
+
   // ←/→ nav: flush save then navigate.
   useEffect(() => {
     const handler = async (e: KeyboardEvent) => {
@@ -307,16 +322,16 @@ export function Editor(p: Props) {
       const targetId = e.key === 'ArrowLeft' ? prevId : nextId;
       if (!targetId) return;
       e.preventDefault();
-      const ok = await flushSave();
-      if (!ok) return;
-      router.push(`/annotate/${targetId}`);
+      await navTo(targetId);
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [prevId, nextId, flushSave, router]);
+  }, [prevId, nextId, navTo]);
 
   useEffect(() => {
-    const nextIds = p.queueIds.slice(currentIdx + 1, currentIdx + 6);
+    const nextIds = p.queueItems
+      .slice(currentIdx + 1, currentIdx + 6)
+      .map((q) => q.id);
     for (const id of nextIds) {
       router.prefetch(`/annotate/${id}`);
       fetch(`/api/images/${id}/signed-url`)
@@ -334,23 +349,41 @@ export function Editor(p: Props) {
     <div className="grid grid-cols-[220px_1fr_200px] h-screen">
       <aside className="border-r p-3 overflow-y-auto">
         <div className="text-xs uppercase text-gray-500 mb-2">
-          Queue ({p.queueIds.length})
+          Queue ({p.queueItems.length})
         </div>
-        {p.queueIds.map((qid, i) => (
-          <div
-            key={qid}
-            className={`py-1 text-xs ${qid === p.imageId ? 'text-gray-900 font-semibold' : 'text-gray-500'}`}
-          >
-            {i < currentIdx ? '✓' : qid === p.imageId ? '●' : '○'} {i + 1}
-          </div>
-        ))}
+        {p.queueItems.map((q, i) => {
+          const isCurrent = q.id === p.imageId;
+          const icon = isCurrent
+            ? '●'
+            : q.state === 'annotated'
+              ? '✓'
+              : q.state === 'needs_rework'
+                ? '✎'
+                : '○';
+          return (
+            <button
+              key={q.id}
+              type="button"
+              disabled={isCurrent}
+              onClick={() => navTo(q.id)}
+              className={`block w-full text-left px-1 py-1 text-xs rounded ${
+                isCurrent
+                  ? 'text-gray-900 font-semibold bg-gray-100 cursor-default'
+                  : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100 cursor-pointer'
+              }`}
+            >
+              <span className="inline-block w-4 text-center">{icon}</span>{' '}
+              {i + 1}
+            </button>
+          );
+        })}
       </aside>
 
       <main className="flex flex-col">
         <header className="px-4 py-2 border-b text-xs flex justify-between text-gray-600">
           <span>
             {p.projectName} / {p.batchName} / {currentIdx + 1} of{' '}
-            {p.queueIds.length}
+            {p.queueItems.length}
           </span>
           <span className="text-right">
             drag: empty→draw · box→move · handle→resize ·
