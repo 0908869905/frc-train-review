@@ -214,11 +214,12 @@ export function AnnotationCanvas({
   function handleMouseMove(e: Konva.KonvaEventObject<MouseEvent>) {
     // Pan
     if (panState.current) {
-      const dx = e.evt.clientX - panState.current.startX;
-      const dy = e.evt.clientY - panState.current.startY;
+      const base = panState.current;
+      const dx = e.evt.clientX - base.startX;
+      const dy = e.evt.clientY - base.startY;
       setVp((cur) => ({
         ...cur,
-        pan: { x: panState.current!.panX + dx, y: panState.current!.panY + dy },
+        pan: { x: base.panX + dx, y: base.panY + dy },
       }));
       return;
     }
