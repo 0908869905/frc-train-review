@@ -361,11 +361,47 @@ async def run_annotations(picked: list[dict]) -> list[dict]:
     return results
 
 
+def print_summary(picked: list[dict], results_by_key: dict, elapsed: float) -> None:
+    """Print markdown summary table + runtime stats."""
+    print("\n" + "=" * 60)
+    print("Summary")
+    print("=" * 60)
+    print()
+    print("| stem | pro R/B/F/T | lite R/B/F/T | Δtotal |")
+    print("|------|-------------|--------------|--------|")
+    for e in picked:
+        stem = e["stem"]
+        pro = results_by_key.get((stem, MODEL_PRO), {})
+        lite = results_by_key.get((stem, MODEL_LITE), {})
+
+        def fmt(r: dict) -> str:
+            if r.get("status") != "done":
+                return "FAIL"
+            return (f"{r['n_red']}/{r['n_blue']}/{r['n_fuel']}/"
+                    f"{r['n_red'] + r['n_blue'] + r['n_fuel']}")
+
+        pro_s = fmt(pro)
+        lite_s = fmt(lite)
+        if pro.get("status") == "done" and lite.get("status") == "done":
+            pt = pro["n_red"] + pro["n_blue"] + pro["n_fuel"]
+            lt = lite["n_red"] + lite["n_blue"] + lite["n_fuel"]
+            delta = f"{pt - lt:+d}"
+        else:
+            delta = "N/A"
+        stem_disp = stem if len(stem) <= 28 else "..." + stem[-25:]
+        print(f"| {stem_disp} | {pro_s} | {lite_s} | {delta} |")
+    print()
+    print(f"耗時：{elapsed:.1f}s")
+    print(f"輸出目錄：{OUT_DIR}")
+    print("開 6 張 compare_*.png 目視評估。")
+
+
 def main():
     print("Gemini 3.1 Pro vs Flash Lite compare experiment")
     print("=" * 60)
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    t_start = time.time()
 
     # Stage 1: 挑圖
     print("\n[Stage 1] 挑圖")
@@ -398,6 +434,10 @@ def main():
         out = make_compare_png(entry["stem"], results_by_key)
         if out:
             print(f"  {out.name}")
+
+    # Stage 4: Summary
+    elapsed = time.time() - t_start
+    print_summary(picked, results_by_key, elapsed)
 
 
 if __name__ == "__main__":
