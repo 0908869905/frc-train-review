@@ -1,5 +1,5 @@
 import type { Box } from './types';
-import { imgToDisp, dispToImg, type Viewport } from './viewport';
+import { imgToDisp, type Viewport } from './viewport';
 
 /** Handle indices match label_editor.py ordering. */
 export type HandleIndex = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7;
@@ -29,7 +29,14 @@ export function boxToImgRect(box: Box, natW: number, natH: number): ImgRect {
 }
 
 /**
- * Returns the id of the top-most box containing (dispX, dispY), or null.
+ * Returns the id of the top-most box whose edge is near (dispX, dispY), or null.
+ * Hit is restricted to an `edgeWidth`-wide band straddling the rectangle's
+ * boundary so that clicks inside a box's interior fall through (letting the
+ * user draw a new box nested inside an existing one).
+ *
+ * For boxes smaller than `2 * edgeWidth` on a side the deadzone collapses and
+ * the whole box becomes hittable — that preserves usability on tiny detections.
+ *
  * "Top-most" = later in array (rendered on top).
  */
 export function hitTestBox(
@@ -38,12 +45,27 @@ export function hitTestBox(
   boxes: Box[],
   natW: number,
   natH: number,
-  vp: Viewport
+  vp: Viewport,
+  edgeWidth = 8
 ): string | null {
-  const { x: ix, y: iy } = dispToImg(dispX, dispY, vp);
   for (let i = boxes.length - 1; i >= 0; i--) {
     const r = boxToImgRect(boxes[i], natW, natH);
-    if (ix >= r.x1 && ix <= r.x2 && iy >= r.y1 && iy <= r.y2) return boxes[i].id;
+    const tl = imgToDisp(r.x1, r.y1, vp);
+    const br = imgToDisp(r.x2, r.y2, vp);
+    if (
+      dispX < tl.x - edgeWidth ||
+      dispX > br.x + edgeWidth ||
+      dispY < tl.y - edgeWidth ||
+      dispY > br.y + edgeWidth
+    ) {
+      continue;
+    }
+    const inDeadzone =
+      dispX > tl.x + edgeWidth &&
+      dispX < br.x - edgeWidth &&
+      dispY > tl.y + edgeWidth &&
+      dispY < br.y - edgeWidth;
+    if (!inDeadzone) return boxes[i].id;
   }
   return null;
 }

@@ -46,22 +46,58 @@ describe('boxToImgRect', () => {
 });
 
 describe('hitTestBox', () => {
-  it('returns the top-most box id when display coord is inside it', () => {
-    // display (500, 250) at zoom=1 pan=0 → image (500, 250) inside box1 (400..600, 150..350)
-    expect(hitTestBox(500, 250, [box1], natW, natH, vp)).toBe('a');
+  // box1 rect is (400, 150)-(600, 350); edgeWidth defaults to 8.
+
+  it('hits on the box edge band', () => {
+    // On the left edge, middle of box1.
+    expect(hitTestBox(400, 250, [box1], natW, natH, vp)).toBe('a');
+    // Just outside the left edge but within edgeWidth.
+    expect(hitTestBox(395, 250, [box1], natW, natH, vp)).toBe('a');
+    // Just inside the left edge but within edgeWidth.
+    expect(hitTestBox(405, 250, [box1], natW, natH, vp)).toBe('a');
   });
 
-  it('prefers later boxes in array (top-most z-order)', () => {
-    // Both boxes cover (100, 50) when we inflate box2 coverage? box2 only covers (50-150, 25-75)
-    // box1 covers (400-600, 100-300). Put them overlapping — use a different box:
-    const boxOver: Box = { ...box1, id: 'over', x: 0.1, y: 0.1, w: 0.2, h: 0.2 };
-    // boxOver covers roughly (0, 0)-(200, 100). box2 covers (50, 25)-(150, 75). Both include (100, 50).
-    expect(hitTestBox(100, 50, [boxOver, box2], natW, natH, vp)).toBe('b');
-    expect(hitTestBox(100, 50, [box2, boxOver], natW, natH, vp)).toBe('over');
+  it('misses when the point is deep inside the interior (deadzone)', () => {
+    // Dead center of box1 — lets users draw a nested box.
+    expect(hitTestBox(500, 250, [box1], natW, natH, vp)).toBeNull();
   });
 
-  it('returns null when display coord is outside all boxes', () => {
+  it('misses when the point is outside the extended rect', () => {
+    // Far outside box1.
     expect(hitTestBox(10, 10, [box1], natW, natH, vp)).toBeNull();
+    // Just beyond the edge tolerance.
+    expect(hitTestBox(390, 250, [box1], natW, natH, vp)).toBeNull();
+  });
+
+  it('prefers later boxes in array (top-most z-order) when both edges overlap', () => {
+    // box1 at (400,150)-(600,350). Stack another box with a boundary crossing (400, 250).
+    const boxOver: Box = {
+      ...box1,
+      id: 'over',
+      x: 0.4,
+      y: 0.5,
+      w: 0.4,
+      h: 0.4,
+    };
+    // boxOver rect: (200, 150)-(600, 350). Right edge at x=600.
+    // box1 right edge also at x=600. Point (600, 250) is on both edges.
+    expect(hitTestBox(600, 250, [boxOver, box1], natW, natH, vp)).toBe('a');
+    expect(hitTestBox(600, 250, [box1, boxOver], natW, natH, vp)).toBe('over');
+  });
+
+  it('treats boxes smaller than 2*edgeWidth as fully hittable', () => {
+    // tiny box: center (0.5, 0.5), size 0.01 x 0.01 → rect (495, 247.5)-(505, 252.5).
+    // Both sides < 2*edgeWidth(16) so the deadzone collapses and the whole box hits.
+    const tiny: Box = {
+      id: 't',
+      classIdx: 0,
+      x: 0.5,
+      y: 0.5,
+      w: 0.01,
+      h: 0.01,
+      source: 'human',
+    };
+    expect(hitTestBox(500, 250, [tiny], natW, natH, vp)).toBe('t');
   });
 });
 
