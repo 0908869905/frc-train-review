@@ -168,6 +168,107 @@ def pick_images() -> list[dict]:
     return result
 
 
+def load_yolo_labels(path: Path) -> list[tuple[int, float, float, float, float]]:
+    """Parse YOLO label file, return list of (cls, cx, cy, w, h)."""
+    if not path.is_file():
+        return []
+    out = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        parts = line.strip().split()
+        if len(parts) != 5:
+            continue
+        try:
+            out.append((
+                int(parts[0]),
+                float(parts[1]), float(parts[2]),
+                float(parts[3]), float(parts[4]),
+            ))
+        except ValueError:
+            continue
+    return out
+
+
+def draw_boxes_on_image(img: np.ndarray, labels: list[tuple]) -> np.ndarray:
+    """Draw YOLO bboxes with class labels. Returns new image copy."""
+    out = img.copy()
+    h, w = out.shape[:2]
+    thickness = max(2, int(min(h, w) / 400))
+    font_scale = max(0.5, min(h, w) / 1800)
+    for cls, cx, cy, bw, bh in labels:
+        x1 = int((cx - bw / 2) * w)
+        y1 = int((cy - bh / 2) * h)
+        x2 = int((cx + bw / 2) * w)
+        y2 = int((cy + bh / 2) * h)
+        color = CLASS_COLORS_BGR.get(cls, (0, 255, 0))
+        cv2.rectangle(out, (x1, y1), (x2, y2), color, thickness)
+        label_text = CLASSES[cls] if 0 <= cls < len(CLASSES) else "?"
+        cv2.putText(
+            out, label_text, (x1, max(y1 - 4, 14)),
+            cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness,
+        )
+    return out
+
+
+def add_header(img: np.ndarray, title: str, counts: tuple[int, int, int]) -> np.ndarray:
+    """Overlay a black header bar with title + class counts at top."""
+    h, w = img.shape[:2]
+    bar_h = max(60, int(h * 0.05))
+    out = img.copy()
+    cv2.rectangle(out, (0, 0), (w, bar_h), (0, 0, 0), -1)
+    nr, nb, nf = counts
+    text = f"{title}   Red:{nr}  Blue:{nb}  Fuel:{nf}  Total:{nr + nb + nf}"
+    fs = max(0.7, w / 1600)
+    cv2.putText(
+        out, text, (12, int(bar_h * 0.7)),
+        cv2.FONT_HERSHEY_SIMPLEX, fs, (255, 255, 255), 2,
+    )
+    return out
+
+
+def make_compare_png(stem: str, results_by_key: dict) -> Path | None:
+    """Build side-by-side compare PNG for one stem. Returns output path."""
+    img_path = OUT_IMAGES / f"{stem}.jpg"
+    raw = cv2.imdecode(np.fromfile(str(img_path), dtype=np.uint8), cv2.IMREAD_COLOR)
+    if raw is None:
+        print(f"  [WARN] 無法讀取 {img_path}")
+        return None
+
+    pro_lbl = load_yolo_labels(OUT_LABELS_PRO / f"{stem}.txt")
+    lite_lbl = load_yolo_labels(OUT_LABELS_LITE / f"{stem}.txt")
+
+    def panel(labels, title: str, result: dict) -> np.ndarray:
+        if result.get("status", "") != "done":
+            panel_img = raw.copy()
+            h, w = panel_img.shape[:2]
+            cv2.rectangle(panel_img, (0, 0), (w, h), (0, 0, 0), -1)
+            cv2.putText(
+                panel_img, f"{title}: API FAILED", (30, h // 2),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3,
+            )
+            return panel_img
+        drawn = draw_boxes_on_image(raw, labels)
+        counts = (result["n_red"], result["n_blue"], result["n_fuel"])
+        return add_header(drawn, title, counts)
+
+    pro_result = results_by_key.get((stem, MODEL_PRO), {"status": "missing"})
+    lite_result = results_by_key.get((stem, MODEL_LITE), {"status": "missing"})
+
+    left = panel(pro_lbl, "GEMINI 3.1 PRO", pro_result)
+    right = panel(lite_lbl, "GEMINI 3.1 FLASH LITE", lite_result)
+
+    h = left.shape[0]
+    divider = np.zeros((h, 8, 3), dtype=np.uint8)
+    combined = cv2.hconcat([left, divider, right])
+
+    out_path = OUT_DIR / f"compare_{stem}.png"
+    ok, buf = cv2.imencode(".png", combined)
+    if not ok:
+        print(f"  [ERROR] PNG encode failed for {stem}")
+        return None
+    out_path.write_bytes(buf.tobytes())
+    return out_path
+
+
 async def annotate_one_to_file(
     client,
     model: str,
@@ -289,6 +390,14 @@ def main():
     # Stage 2: 雙模型並行標註
     print("\n[Stage 2] 雙模型並行標註")
     anno_results = asyncio.run(run_annotations(picked))
+
+    # Stage 3: 繪製對比 PNG
+    print("\n[Stage 3] 繪製對比 PNG")
+    results_by_key = {(r["stem"], r["model"]): r for r in anno_results}
+    for entry in picked:
+        out = make_compare_png(entry["stem"], results_by_key)
+        if out:
+            print(f"  {out.name}")
 
 
 if __name__ == "__main__":
