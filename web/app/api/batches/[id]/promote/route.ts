@@ -43,6 +43,10 @@ export async function POST(
         data: { state: 'under_review' },
       });
 
+      if (count === 0) {
+        throw new HttpError(400, '目前沒有已標註的圖可送審');
+      }
+
       if (batch.state === 'in_annotation') {
         await tx.batch.update({
           where: { id: batchId },
