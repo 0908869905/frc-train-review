@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { ClassPalette } from '@/components/annotation/ClassPalette';
@@ -65,6 +65,22 @@ export function Editor(p: Props) {
     undoStackRef.current = [];
     setSelectedId(null);
   }, [p.imageId]);
+
+  const counts = useMemo(() => {
+    const out = new Array<number>(p.classes.length).fill(0);
+    for (const b of boxes) {
+      if (b.classIdx >= 0 && b.classIdx < out.length) out[b.classIdx] += 1;
+    }
+    return out;
+  }, [boxes, p.classes.length]);
+
+  const deleteAll = useCallback(() => {
+    if (readOnly || boxes.length === 0) return;
+    if (!window.confirm(`刪除全部 ${boxes.length} 個標註？（可按 Ctrl+Z 復原）`)) return;
+    undoStackRef.current = pushUndo(undoStackRef.current, boxes, 50);
+    setBoxes([]);
+    setSelectedId(null);
+  }, [boxes, readOnly]);
 
   const currentIdx = p.queueItems.findIndex((q) => q.id === p.imageId);
   const nextId = p.queueItems[currentIdx + 1]?.id;
@@ -405,13 +421,24 @@ export function Editor(p: Props) {
         </div>
         <footer className="px-4 py-2 border-t flex justify-between items-center text-xs">
           <span className="text-gray-500">{status}</span>
-          {readOnly ? (
-            <Button variant="outline" onClick={unsubmit}>
-              解鎖重標
-            </Button>
-          ) : (
-            <Button onClick={submit}>Submit &amp; next (S)</Button>
-          )}
+          <div className="flex items-center gap-2">
+            {!readOnly && (
+              <Button
+                variant="outline"
+                onClick={deleteAll}
+                disabled={boxes.length === 0}
+              >
+                全部刪除
+              </Button>
+            )}
+            {readOnly ? (
+              <Button variant="outline" onClick={unsubmit}>
+                解鎖重標
+              </Button>
+            ) : (
+              <Button onClick={submit}>Submit &amp; next (S)</Button>
+            )}
+          </div>
         </footer>
       </main>
 
@@ -420,6 +447,7 @@ export function Editor(p: Props) {
           classes={p.classes}
           activeIdx={activeIdx}
           onSelect={setActiveIdx}
+          counts={counts}
         />
       </aside>
     </div>

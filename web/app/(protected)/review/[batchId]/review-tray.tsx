@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
@@ -51,6 +51,15 @@ export function ReviewTray({
   const [rejectOther, setRejectOther] = useState('');
 
   const current = images[idx];
+
+  const counts = useMemo(() => {
+    const out = new Array<number>(classes.length).fill(0);
+    if (!current) return out;
+    for (const b of current.boxes) {
+      if (b.classIdx >= 0 && b.classIdx < out.length) out[b.classIdx] += 1;
+    }
+    return out;
+  }, [current, classes.length]);
 
   const next = useCallback(() => {
     if (idx + 1 < images.length) setIdx(idx + 1);
@@ -115,6 +124,23 @@ export function ReviewTray({
         </span>
         <span>Space approve · R reject</span>
       </header>
+      <div className="px-4 py-2 border-b flex flex-wrap gap-2">
+        {classes.map((c) => (
+          <span
+            key={c.idx}
+            className="inline-flex items-center gap-2 px-3 py-1 border rounded-md text-xs"
+          >
+            <span
+              className="w-3 h-3 rounded-full"
+              style={{ backgroundColor: c.color }}
+            />
+            <span>{c.name}</span>
+            <span className="tabular-nums text-gray-600">
+              × {counts[c.idx] ?? 0}
+            </span>
+          </span>
+        ))}
+      </div>
       <div className="flex-1 flex bg-gray-50">
         <AnnotationCanvas
           imageUrl={current.imageUrl}
