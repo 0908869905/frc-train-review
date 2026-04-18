@@ -264,9 +264,12 @@ export function Editor(p: Props) {
       method: 'POST',
     });
     if (res.ok) {
-      const json = await res.json().catch(() => ({}));
-      setStatus(`promoted ${json.promoted ?? 0} images`);
-      router.refresh();
+      // Full reload: router.refresh() only invalidates the current route's
+      // RSC cache, leaving prefetched /annotate/[nextId] entries stale —
+      // after promote, queueItems on those cached pages still include the
+      // just-promoted images, so S / ← jumps land on pages with a wrong
+      // sidebar. Hard reload nukes the entire router cache.
+      window.location.reload();
     } else if (res.status === 401) {
       setStatus('session expired — redirecting…');
       window.location.href = '/login';
