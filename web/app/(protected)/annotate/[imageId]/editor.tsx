@@ -23,6 +23,7 @@ const AnnotationCanvas = dynamic(
 type Props = {
   imageId: string;
   imageUrl: string;
+  imageState: 'assigned' | 'needs_rework' | 'annotated' | string;
   classes: ClassDef[];
   initialBoxes: Box[];
   initialUpdatedAt: string;
@@ -33,11 +34,12 @@ type Props = {
 
 export function Editor(p: Props) {
   const router = useRouter();
+  const readOnly = p.imageState === 'annotated';
   const [boxes, setBoxes] = useState<Box[]>(p.initialBoxes);
   const [activeIdx, setActiveIdx] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState(p.initialUpdatedAt);
-  const [status, setStatus] = useState('saved');
+  const [status, setStatus] = useState(readOnly ? 'submitted (read-only)' : 'saved');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Undo stack lives entirely in a ref — no UI depends on it, so no useState needed.
@@ -85,6 +87,7 @@ export function Editor(p: Props) {
   // If a save is already in flight, await it first — then kick off a fresh save
   // with the LATEST boxes. Prevents silent data loss on rapid ←/→/S navigation.
   const doSave = useCallback(async (): Promise<boolean> => {
+    if (readOnly) return true;
     if (inFlightSave.current) {
       await inFlightSave.current;
     }
@@ -113,7 +116,16 @@ export function Editor(p: Props) {
           setStatus('saved');
           return true;
         }
-        setStatus('save failed');
+        if (res.status === 401) {
+          setStatus('session expired — redirecting…');
+          window.location.href = '/login';
+          return false;
+        }
+        const msg = await res
+          .json()
+          .then((j) => j?.error as string | undefined)
+          .catch(() => undefined);
+        setStatus(msg ? `save failed: ${msg}` : 'save failed');
         return false;
       } finally {
         inFlightSave.current = null;
@@ -121,10 +133,11 @@ export function Editor(p: Props) {
     })();
     inFlightSave.current = promise;
     return await promise;
-  }, [p.imageId]);
+  }, [p.imageId, readOnly]);
 
-  // Debounced auto-save (2s) — replaces the old inline useEffect.
+  // Debounced auto-save (2s) — skipped entirely when read-only.
   useEffect(() => {
+    if (readOnly) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       doSave();
@@ -132,7 +145,7 @@ export function Editor(p: Props) {
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [boxes, doSave]);
+  }, [boxes, doSave, readOnly]);
 
   // Flush: cancel pending debounce and save immediately. Returns true if persisted.
   // Skips the PATCH round trip when boxes ref-equal the last persisted snapshot
@@ -153,6 +166,7 @@ export function Editor(p: Props) {
   }, [doSave]);
 
   const submit = useCallback(async () => {
+    if (readOnly) return;
     const ok = await flushSave();
     if (!ok) return;
     setStatus('submitting...');
@@ -162,10 +176,36 @@ export function Editor(p: Props) {
     if (res.ok) {
       if (nextId) router.push(`/annotate/${nextId}`);
       else router.push('/');
+    } else if (res.status === 401) {
+      setStatus('session expired — redirecting…');
+      window.location.href = '/login';
     } else {
-      setStatus('submit failed');
+      const msg = await res
+        .json()
+        .then((j) => j?.error as string | undefined)
+        .catch(() => undefined);
+      setStatus(msg ? `submit failed: ${msg}` : 'submit failed');
     }
-  }, [p.imageId, nextId, router, flushSave]);
+  }, [p.imageId, nextId, router, flushSave, readOnly]);
+
+  const unsubmit = useCallback(async () => {
+    setStatus('unlocking…');
+    const res = await fetch(`/api/images/${p.imageId}/unsubmit`, {
+      method: 'POST',
+    });
+    if (res.ok) {
+      router.refresh();
+    } else if (res.status === 401) {
+      setStatus('session expired — redirecting…');
+      window.location.href = '/login';
+    } else {
+      const msg = await res
+        .json()
+        .then((j) => j?.error as string | undefined)
+        .catch(() => undefined);
+      setStatus(msg ? `unlock failed: ${msg}` : 'unlock failed');
+    }
+  }, [p.imageId, router]);
 
   // Best-effort flush on unmount (page close, route away outside ←/→).
   useEffect(() => {
@@ -174,6 +214,7 @@ export function Editor(p: Props) {
         clearTimeout(saveTimer.current);
         saveTimer.current = null;
       }
+      if (readOnly) return;
       // Fire-and-forget; we can't await here.
       doSave();
     };
@@ -184,6 +225,11 @@ export function Editor(p: Props) {
     const handler = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+
+      if (readOnly) {
+        if (e.key === 'Escape') setSelectedId(null);
+        return;
+      }
 
       // Ctrl+Z undo (Mac: metaKey)
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
@@ -314,11 +360,18 @@ export function Editor(p: Props) {
             onChange={onBoxesChange}
             selectedId={selectedId}
             onSelect={setSelectedId}
+            readOnly={readOnly}
           />
         </div>
         <footer className="px-4 py-2 border-t flex justify-between items-center text-xs">
           <span className="text-gray-500">{status}</span>
-          <Button onClick={submit}>Submit &amp; next (S)</Button>
+          {readOnly ? (
+            <Button variant="outline" onClick={unsubmit}>
+              解鎖重標
+            </Button>
+          ) : (
+            <Button onClick={submit}>Submit &amp; next (S)</Button>
+          )}
         </footer>
       </main>
 

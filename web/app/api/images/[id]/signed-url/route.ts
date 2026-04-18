@@ -9,11 +9,13 @@ export async function GET(
 ) {
   const session = await getSession();
   if (!session) {
-    throw Object.assign(new Error('Unauthenticated'), { status: 401 });
+    return NextResponse.json({ error: 'Unauthenticated' }, { status: 401 });
   }
   const { id } = await params;
   const img = await prisma.image.findUnique({ where: { id } });
-  if (!img) throw Object.assign(new Error('Not found'), { status: 404 });
+  if (!img) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 });
+  }
 
   const userId = session.user.id;
   const hasReviewer = verifyStepUpCookie(
@@ -26,7 +28,7 @@ export async function GET(
   );
   const isPrivileged = hasReviewer || hasAdmin;
   if (!isPrivileged && img.assignedToId !== userId) {
-    throw Object.assign(new Error('Forbidden'), { status: 403 });
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
   return NextResponse.json({ url: img.blobPath });
 }

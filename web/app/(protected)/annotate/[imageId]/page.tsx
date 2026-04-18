@@ -27,7 +27,7 @@ export default async function AnnotatePage({
   const queue = await prisma.image.findMany({
     where: {
       assignedToId: session.user.id,
-      state: { in: ['assigned', 'needs_rework'] },
+      state: { in: ['assigned', 'needs_rework', 'annotated'] },
     },
     orderBy: { updatedAt: 'asc' },
     select: { id: true },
@@ -43,6 +43,7 @@ export default async function AnnotatePage({
     <Editor
       imageId={image.id}
       imageUrl={image.blobPath}
+      imageState={image.state}
       classes={classes}
       initialBoxes={image.annotations.map((a) => ({
         id: a.id,

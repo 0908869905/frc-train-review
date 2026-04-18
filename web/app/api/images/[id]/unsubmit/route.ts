@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
-import { canTransition } from '@/lib/state-machine';
+import { writeAudit } from '@/lib/audit';
 
 class HttpError extends Error {
   constructor(public status: number, msg: string) {
@@ -26,37 +26,19 @@ export async function POST(
       if (img.assignedToId !== session.user.id) {
         throw new HttpError(403, 'Not your image');
       }
-
-      if (img.state === 'assigned' && canTransition('assigned', 'submit')) {
-        await tx.image.update({ where: { id }, data: { state: 'annotated' } });
-      } else if (
-        img.state === 'needs_rework' &&
-        canTransition('needs_rework', 'resubmit')
-      ) {
-        await tx.image.update({
-          where: { id },
-          data: { state: 'under_review' },
-        });
-        return;
-      } else {
-        throw new HttpError(409, `Illegal submit from ${img.state}`);
+      if (img.state !== 'annotated') {
+        throw new HttpError(
+          409,
+          `Cannot unsubmit from ${img.state} (only annotated images can be unsubmitted)`,
+        );
       }
-
-      const remaining = await tx.image.count({
-        where: { batchId: img.batchId, state: { not: 'annotated' } },
+      await tx.image.update({
+        where: { id },
+        data: { state: 'assigned' },
       });
-      if (remaining === 0) {
-        await tx.image.updateMany({
-          where: { batchId: img.batchId, state: 'annotated' },
-          data: { state: 'under_review' },
-        });
-        await tx.batch.update({
-          where: { id: img.batchId },
-          data: { state: 'under_review' },
-        });
-      }
     });
 
+    await writeAudit(session.user.id, 'image.unsubmit', 'image', id, {});
     return NextResponse.json({ ok: true });
   } catch (e) {
     if (e instanceof HttpError) {
