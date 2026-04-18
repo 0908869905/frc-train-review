@@ -34,9 +34,9 @@ datasets/_compare_pro_vs_lite/
 ### Step 1: 挑圖（從已標 labels 篩）
 - 讀 `datasets/frc-vision-notyet/labels/**/*.txt`
 - 對每張計算 (red_robot, blue_robot, fuel) 數量
-- 篩選條件：`red + blue ≥ 4 且 fuel ≥ 10`
+- 篩選條件：`red + blue ≥ 3 且 fuel ≥ 10`
 - 依 fuel 數降序，取 top 6
-- Fallback：若不足 6 張，降門檻為 `red + blue ≥ 3 且 fuel ≥ 5` 再試
+- Fallback：若不足 6 張，降門檻為 `red + blue ≥ 2 且 fuel ≥ 5` 再試
 - Fallback 2：仍不足則顯示實際分佈直方圖，由使用者手動調整門檻
 - 把 6 張原圖 copy 到 `datasets/_compare_pro_vs_lite/images/`
 - 寫 `manifest.json` 記錄：每張的 source path / 原 Lite labels 的 counts / 篩選條件
