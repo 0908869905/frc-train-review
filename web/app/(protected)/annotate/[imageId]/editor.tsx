@@ -196,49 +196,58 @@ export function Editor(p: Props) {
     return await doSave();
   }, [doSave]);
 
-  const submit = useCallback(async () => {
+  const submit = useCallback(() => {
     if (readOnly) return;
-    // Cancel pending autosave debounce — we're about to persist inline.
+    // Cancel pending autosave debounce — submit POST carries the boxes.
     if (saveTimer.current) {
       clearTimeout(saveTimer.current);
       saveTimer.current = null;
     }
-    // Wait for any in-flight autosave so updatedAtRef matches the server.
-    if (inFlightSave.current) {
-      const ok = await inFlightSave.current;
-      if (!ok) return; // doSave already set status
-    }
-    setStatus('submitting...');
-    const res = await fetch(`/api/images/${p.imageId}/submit`, {
+    // Snapshot payload before navigating; refs will change after unmount.
+    const imageId = p.imageId;
+    const payload = JSON.stringify({
+      lastKnownUpdatedAt: updatedAtRef.current,
+      boxes: boxesRef.current.map((b) => ({
+        classIdx: b.classIdx,
+        x: b.x,
+        y: b.y,
+        w: b.w,
+        h: b.h,
+      })),
+    });
+
+    // Optimistic: navigate away first so the UI feels instant, persist in
+    // background. submittedRef tells the unmount flush to stay out of the way.
+    submittedRef.current = true;
+    if (nextId) router.push(`/annotate/${nextId}`);
+    else router.push('/');
+
+    void fetch(`/api/images/${imageId}/submit`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        lastKnownUpdatedAt: updatedAtRef.current,
-        boxes: boxesRef.current.map((b) => ({
-          classIdx: b.classIdx,
-          x: b.x,
-          y: b.y,
-          w: b.w,
-          h: b.h,
-        })),
-      }),
-    });
-    if (res.ok) {
-      submittedRef.current = true;
-      if (nextId) router.push(`/annotate/${nextId}`);
-      else router.push('/');
-      return;
-    }
-    if (res.status === 401) {
-      setStatus('session expired — redirecting…');
-      window.location.href = '/login';
-      return;
-    }
-    const msg = await res
-      .json()
-      .then((j) => j?.error as string | undefined)
-      .catch(() => undefined);
-    setStatus(msg ? `submit failed: ${msg}` : 'submit failed');
+      body: payload,
+    })
+      .then(async (res) => {
+        if (res.ok) return;
+        if (res.status === 401) {
+          window.location.href = '/login';
+          return;
+        }
+        const msg = await res
+          .json()
+          .then((j) => j?.error as string | undefined)
+          .catch(() => undefined);
+        // The original editor instance has unmounted — surface the failure
+        // loudly so the annotator realises their submit did not land.
+        window.alert(
+          `送出失敗（圖片 ${imageId.slice(-6)}）${msg ? `：${msg}` : ''}。請回到佇列找這張重標/重送。`,
+        );
+      })
+      .catch((e) => {
+        window.alert(
+          `送出網路錯誤（圖片 ${imageId.slice(-6)}）：${String(e?.message ?? e)}。請回到佇列找這張重標/重送。`,
+        );
+      });
   }, [p.imageId, nextId, router, readOnly]);
 
   const promoteBatch = useCallback(async () => {

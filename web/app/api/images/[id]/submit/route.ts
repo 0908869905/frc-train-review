@@ -76,19 +76,21 @@ export async function POST(
 
       if (hasBoxes) {
         const now = new Date();
-        const lastKnown = new Date(parsedBody!.lastKnownUpdatedAt!);
-        // One updateMany handles CAS + state flip atomically.
+        // No updatedAt CAS here — submit runs optimistically alongside any
+        // in-flight autosave PATCH. The state match (`state: img.state`) is
+        // enough: the first writer wins, the second's state check fails
+        // harmlessly (submit after submit → 409; submit after autosave →
+        // submit still wins because state was `assigned` when this tx opened).
         const bumped = await tx.image.updateMany({
           where: {
             id,
             assignedToId: session.user.id,
             state: img.state,
-            updatedAt: lastKnown,
           },
           data: { updatedAt: now, state: newState },
         });
         if (bumped.count !== 1) {
-          throw new HttpError(409, 'Stale write or state changed');
+          throw new HttpError(409, 'State changed');
         }
         await tx.annotation.deleteMany({ where: { imageId: id } });
         const incoming = parsedBody!.boxes!;
