@@ -11,6 +11,7 @@ export type Transition =
   | 'submit'
   | 'unsubmit'
   | 'enter_review'
+  | 'promote'
   | 'approve'
   | 'reject'
   | 'resubmit';
@@ -20,6 +21,7 @@ const RULES: Record<Transition, { from: ImageState[]; to: ImageState }> = {
   submit: { from: ['assigned'], to: 'annotated' },
   unsubmit: { from: ['annotated'], to: 'assigned' },
   enter_review: { from: ['annotated'], to: 'under_review' },
+  promote: { from: ['annotated'], to: 'under_review' },
   approve: { from: ['under_review'], to: 'approved' },
   reject: { from: ['under_review'], to: 'needs_rework' },
   resubmit: { from: ['needs_rework'], to: 'under_review' },

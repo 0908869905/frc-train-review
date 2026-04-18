@@ -33,6 +33,7 @@ type Props = {
   initialBoxes: Box[];
   initialUpdatedAt: string;
   queueItems: QueueItem[];
+  batchId: string;
   batchName: string;
   projectName: string;
 };
@@ -208,6 +209,35 @@ export function Editor(p: Props) {
       setStatus(msg ? `submit failed: ${msg}` : 'submit failed');
     }
   }, [p.imageId, nextId, router, flushSave, readOnly]);
+
+  const promoteBatch = useCallback(async () => {
+    const ok = await flushSave();
+    if (!ok) return;
+    if (
+      !window.confirm(
+        '送出本批次目前已標註圖片給審核？之後的 submit 會直接進 review queue。',
+      )
+    )
+      return;
+    setStatus('promoting…');
+    const res = await fetch(`/api/batches/${p.batchId}/promote`, {
+      method: 'POST',
+    });
+    if (res.ok) {
+      const json = await res.json().catch(() => ({}));
+      setStatus(`promoted ${json.promoted ?? 0} images`);
+      router.refresh();
+    } else if (res.status === 401) {
+      setStatus('session expired — redirecting…');
+      window.location.href = '/login';
+    } else {
+      const msg = await res
+        .json()
+        .then((j) => j?.error as string | undefined)
+        .catch(() => undefined);
+      setStatus(msg ? `promote failed: ${msg}` : 'promote failed');
+    }
+  }, [p.batchId, flushSave, router]);
 
   const unsubmit = useCallback(async () => {
     setStatus('unlocking…');
@@ -431,6 +461,9 @@ export function Editor(p: Props) {
                 全部刪除
               </Button>
             )}
+            <Button variant="outline" onClick={promoteBatch}>
+              送出目前進度給審核
+            </Button>
             {readOnly ? (
               <Button variant="outline" onClick={unsubmit}>
                 解鎖重標

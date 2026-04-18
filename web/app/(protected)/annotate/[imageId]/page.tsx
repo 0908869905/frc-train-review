@@ -56,6 +56,7 @@ export default async function AnnotatePage({
       }))}
       initialUpdatedAt={image.updatedAt.toISOString()}
       queueItems={queue.map((q) => ({ id: q.id, state: q.state }))}
+      batchId={image.batchId}
       batchName={image.batch.name}
       projectName={image.batch.project.name}
     />

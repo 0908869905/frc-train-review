@@ -21,14 +21,25 @@ export async function POST(
     const { id } = await params;
 
     await prisma.$transaction(async (tx) => {
-      const img = await tx.image.findUnique({ where: { id } });
+      const img = await tx.image.findUnique({
+        where: { id },
+        include: { batch: { select: { state: true } } },
+      });
       if (!img) throw new HttpError(404, 'Not found');
       if (img.assignedToId !== session.user.id) {
         throw new HttpError(403, 'Not your image');
       }
 
+      // If the batch is already under review (due to a prior partial
+      // promote), fresh submits skip the `annotated` intermediate state so
+      // the reviewer sees them immediately.
+      const batchPromoted = img.batch.state === 'under_review';
+
       if (img.state === 'assigned' && canTransition('assigned', 'submit')) {
-        await tx.image.update({ where: { id }, data: { state: 'annotated' } });
+        await tx.image.update({
+          where: { id },
+          data: { state: batchPromoted ? 'under_review' : 'annotated' },
+        });
       } else if (
         img.state === 'needs_rework' &&
         canTransition('needs_rework', 'resubmit')
@@ -41,6 +52,8 @@ export async function POST(
       } else {
         throw new HttpError(409, `Illegal submit from ${img.state}`);
       }
+
+      if (batchPromoted) return;
 
       const remaining = await tx.image.count({
         where: { batchId: img.batchId, state: { not: 'annotated' } },
