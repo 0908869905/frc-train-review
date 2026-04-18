@@ -225,6 +225,7 @@ export function Editor(p: Props) {
     const handler = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+      if (e.repeat) return;
 
       if (readOnly) {
         if (e.key === 'Escape') setSelectedId(null);
@@ -297,6 +298,12 @@ export function Editor(p: Props) {
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      if (e.repeat) {
+        // Held-key OS repeat fires ~30Hz → would stack dozens of router.push
+        // before the first navigation unmounts. Require discrete keypresses.
+        e.preventDefault();
+        return;
+      }
       const targetId = e.key === 'ArrowLeft' ? prevId : nextId;
       if (!targetId) return;
       e.preventDefault();
