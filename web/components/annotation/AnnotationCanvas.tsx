@@ -25,6 +25,18 @@ import {
   type HandleIndex,
 } from './hit-test';
 
+function darken(hex: string, amount: number): string {
+  const m = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(hex);
+  if (!m) return hex;
+  let h = m[1];
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  const n = parseInt(h, 16);
+  const r = Math.max(0, Math.round(((n >> 16) & 0xff) * (1 - amount)));
+  const g = Math.max(0, Math.round(((n >> 8) & 0xff) * (1 - amount)));
+  const b = Math.max(0, Math.round((n & 0xff) * (1 - amount)));
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+}
+
 type Props = {
   imageUrl: string;
   classes: ClassDef[];
@@ -351,7 +363,7 @@ export function AnnotationCanvas({
   }, []);
 
   function classColor(idx: number) {
-    return classes[idx]?.color ?? '#888';
+    return darken(classes[idx]?.color ?? '#888', 0.25);
   }
 
   function renderHandles(x: number, y: number, w: number, h: number, color: string) {

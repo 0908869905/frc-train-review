@@ -29,7 +29,7 @@ export default async function AnnotatePage({
       assignedToId: session.user.id,
       state: { in: ['assigned', 'needs_rework', 'annotated'] },
     },
-    orderBy: { updatedAt: 'asc' },
+    orderBy: [{ batchId: 'asc' }, { id: 'asc' }],
     select: { id: true },
   });
 
