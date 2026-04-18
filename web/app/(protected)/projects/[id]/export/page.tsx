@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { StepUpGuard } from '@/components/step-up-guard';
-import { Button } from '@/components/ui/button';
+import { DownloadButton } from './download-button';
 
 export default async function ExportPage({
   params,
@@ -23,9 +23,7 @@ export default async function ExportPage({
         <p className="text-sm text-gray-600 mb-6">
           {approved} approved images will be included.
         </p>
-        <a href={`/api/projects/${id}/export`}>
-          <Button disabled={approved === 0}>Download zip</Button>
-        </a>
+        <DownloadButton projectId={id} disabled={approved === 0} />
         <p className="text-xs text-gray-400 mt-6">
           The downloaded zip is ready for{' '}
           <code>train_robot_model.py --local-dataset data.yaml</code> on the GPU

@@ -7,7 +7,42 @@ import { unzipSync, strFromU8 } from 'fflate';
 const fakeJpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xd9]);
 global.fetch = vi.fn(async () => new Response(fakeJpeg)) as typeof fetch;
 
-describe('GET /api/projects/[id]/export', () => {
+const { capturedZipRef } = vi.hoisted(() => ({
+  capturedZipRef: { current: null as Uint8Array | null },
+}));
+
+vi.mock('@vercel/blob', () => ({
+  put: vi.fn(async (key: string, body: ReadableStream<Uint8Array>) => {
+    const reader = body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value) {
+        chunks.push(value);
+        total += value.length;
+      }
+    }
+    const buf = new Uint8Array(total);
+    let o = 0;
+    for (const c of chunks) {
+      buf.set(c, o);
+      o += c.length;
+    }
+    capturedZipRef.current = buf;
+    const fakeUrl = `https://fake.public.blob.vercel-storage.com/${key}`;
+    return {
+      url: fakeUrl,
+      downloadUrl: fakeUrl,
+      pathname: key,
+      contentType: 'application/zip',
+      contentDisposition: `attachment; filename="${key.split('/').pop()}"`,
+    };
+  }),
+}));
+
+describe('POST /api/projects/[id]/export', () => {
   let projectId: string;
 
   beforeAll(() => {
@@ -15,6 +50,7 @@ describe('GET /api/projects/[id]/export', () => {
   });
 
   beforeEach(async () => {
+    capturedZipRef.current = null;
     await prisma.auditLog.deleteMany();
     await prisma.annotation.deleteMany();
     await prisma.reviewEvent.deleteMany();
@@ -69,18 +105,28 @@ describe('GET /api/projects/[id]/export', () => {
     });
   });
 
-  it('returns a YOLO zip with approved images', async () => {
-    const { GET } = await import('@/app/api/projects/[id]/export/route');
+  it('returns a signed url and packs a valid YOLO zip into blob', async () => {
+    const { POST } = await import('@/app/api/projects/[id]/export/route');
     const c = signStepUpCookie({ userId: 'u-admin', scope: 'reviewer' });
-    const res = await GET(
+    const res = await POST(
       new Request('http://x', {
+        method: 'POST',
         headers: { cookie: `${stepUpCookieName('reviewer')}=${c}` },
       }),
       { params: Promise.resolve({ id: projectId }) },
     );
     expect(res.status).toBe(200);
-    const buf = new Uint8Array(await res.arrayBuffer());
-    const entries = unzipSync(buf);
+    const body = (await res.json()) as {
+      url: string;
+      filename: string;
+      imageCount: number;
+    };
+    expect(body.url).toMatch(/\.blob\.vercel-storage\.com\//);
+    expect(body.filename).toMatch(/\.zip$/);
+    expect(body.imageCount).toBe(1);
+
+    expect(capturedZipRef.current).not.toBeNull();
+    const entries = unzipSync(capturedZipRef.current!);
     expect(Object.keys(entries)).toContain('classes.txt');
     expect(Object.keys(entries)).toContain('data.yaml');
     expect(strFromU8(entries['classes.txt'])).toContain('coral');
@@ -89,5 +135,24 @@ describe('GET /api/projects/[id]/export', () => {
     );
     expect(labelKey).toBeTruthy();
     expect(strFromU8(entries[labelKey!])).toContain('0 0.5 0.5 0.2 0.2');
+    const imgKey = Object.keys(entries).find(
+      (k) => k.startsWith('images/') && k.endsWith('.jpg'),
+    );
+    expect(imgKey).toBeTruthy();
+  });
+
+  it('returns 400 when project has no approved images', async () => {
+    await prisma.annotation.deleteMany();
+    await prisma.image.deleteMany();
+    const { POST } = await import('@/app/api/projects/[id]/export/route');
+    const c = signStepUpCookie({ userId: 'u-admin', scope: 'reviewer' });
+    const res = await POST(
+      new Request('http://x', {
+        method: 'POST',
+        headers: { cookie: `${stepUpCookieName('reviewer')}=${c}` },
+      }),
+      { params: Promise.resolve({ id: projectId }) },
+    );
+    expect(res.status).toBe(400);
   });
 });
