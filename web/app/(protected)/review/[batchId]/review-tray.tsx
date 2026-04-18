@@ -32,6 +32,7 @@ const REJECT_PRESETS = [
   '少框 fuels',
 ] as const;
 const OTHER = '其他';
+const PREFETCH_AHEAD = 3;
 
 export function ReviewTray({
   batchName,
@@ -49,6 +50,7 @@ export function ReviewTray({
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectChoice, setRejectChoice] = useState<string>('');
   const [rejectOther, setRejectOther] = useState('');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const current = images[idx];
 
@@ -61,17 +63,38 @@ export function ReviewTray({
     return out;
   }, [current, classes.length]);
 
+  // Prefetch next N images so they're already in browser HTTP cache by the
+  // time the reviewer hits Space. Using native HTMLImageElement forces the
+  // browser to perform an actual network fetch subject to CORS/cache headers.
+  useEffect(() => {
+    const ahead = images.slice(idx + 1, idx + 1 + PREFETCH_AHEAD);
+    for (const img of ahead) {
+      const preload = new window.Image();
+      preload.src = img.imageUrl;
+    }
+  }, [idx, images]);
+
   const next = useCallback(() => {
     if (idx + 1 < images.length) setIdx(idx + 1);
     else router.push('/');
   }, [idx, images.length, router]);
 
-  const approve = useCallback(async () => {
+  // Optimistic approve: advance the UI immediately, fire POST in background.
+  // approve almost never fails; if it does we surface a persistent banner so
+  // the reviewer can refresh + retry the specific image later.
+  const approve = useCallback(() => {
     if (!current) return;
-    const res = await fetch(`/api/images/${current.id}/approve`, {
-      method: 'POST',
-    });
-    if (res.ok) next();
+    const imageId = current.id;
+    next();
+    void fetch(`/api/images/${imageId}/approve`, { method: 'POST' })
+      .then((res) => {
+        if (!res.ok) {
+          setErrorMsg(`approve failed (image ${imageId.slice(-6)}) — refresh`);
+        }
+      })
+      .catch(() => {
+        setErrorMsg(`approve failed (image ${imageId.slice(-6)}) — refresh`);
+      });
   }, [current, next]);
 
   const openReject = useCallback(() => {
@@ -84,17 +107,25 @@ export function ReviewTray({
     rejectChoice === OTHER ? rejectOther.trim() : rejectChoice;
   const canConfirm = finalComment.length > 0;
 
-  async function confirmReject() {
+  function confirmReject() {
     if (!current || !canConfirm) return;
-    const res = await fetch(`/api/images/${current.id}/reject`, {
+    const imageId = current.id;
+    const comment = finalComment;
+    setRejectOpen(false);
+    next();
+    void fetch(`/api/images/${imageId}/reject`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ comment: finalComment }),
-    });
-    if (res.ok) {
-      setRejectOpen(false);
-      next();
-    }
+      body: JSON.stringify({ comment }),
+    })
+      .then((res) => {
+        if (!res.ok) {
+          setErrorMsg(`reject failed (image ${imageId.slice(-6)}) — refresh`);
+        }
+      })
+      .catch(() => {
+        setErrorMsg(`reject failed (image ${imageId.slice(-6)}) — refresh`);
+      });
   }
 
   useEffect(() => {
@@ -124,6 +155,18 @@ export function ReviewTray({
         </span>
         <span>Space approve · R reject</span>
       </header>
+      {errorMsg && (
+        <div className="px-4 py-2 bg-red-50 border-b border-red-200 text-xs text-red-800 flex justify-between items-center">
+          <span>{errorMsg}</span>
+          <button
+            type="button"
+            onClick={() => setErrorMsg(null)}
+            className="text-red-600 hover:text-red-900"
+          >
+            ×
+          </button>
+        </div>
+      )}
       <div className="px-4 py-2 border-b flex flex-wrap gap-2">
         {classes.map((c) => (
           <span

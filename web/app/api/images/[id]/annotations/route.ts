@@ -34,44 +34,44 @@ export async function PATCH(
     const { id } = await params;
     const body = Body.parse(await req.json());
     const lastKnown = new Date(body.lastKnownUpdatedAt);
+    const now = new Date();
 
-    const refreshed = await prisma.$transaction(async (tx) => {
-      const image = await tx.image.findUnique({ where: { id } });
-      if (!image) throw new HttpError(404, 'Not found');
-      if (image.assignedToId !== session.user.id) {
-        throw new HttpError(403, 'Not your image');
-      }
-      if (image.state !== 'assigned' && image.state !== 'needs_rework') {
-        throw new HttpError(409, `Cannot edit in state ${image.state}`);
-      }
-
-      const now = new Date();
+    await prisma.$transaction(async (tx) => {
+      // Single updateMany combines: existence + assignedTo check + state check
+      // + optimistic concurrency (updatedAt CAS) + updatedAt bump.
+      // If count != 1, we can't tell which condition failed; client retries /
+      // refreshes. Server returns 409; page.tsx will reload fresh state.
       const bumped = await tx.image.updateMany({
-        where: { id, updatedAt: lastKnown },
+        where: {
+          id,
+          assignedToId: session.user.id,
+          state: { in: ['assigned', 'needs_rework'] },
+          updatedAt: lastKnown,
+        },
         data: { updatedAt: now },
       });
       if (bumped.count !== 1) {
-        throw new HttpError(409, 'Stale write');
+        throw new HttpError(409, 'Stale write or not editable');
       }
 
       await tx.annotation.deleteMany({ where: { imageId: id } });
-      await tx.annotation.createMany({
-        data: body.boxes.map((b) => ({
-          imageId: id,
-          classIdx: b.classIdx,
-          x: b.x,
-          y: b.y,
-          w: b.w,
-          h: b.h,
-          source: 'human' as const,
-          authorId: session.user.id,
-        })),
-      });
-
-      return tx.image.findUniqueOrThrow({ where: { id } });
+      if (body.boxes.length > 0) {
+        await tx.annotation.createMany({
+          data: body.boxes.map((b) => ({
+            imageId: id,
+            classIdx: b.classIdx,
+            x: b.x,
+            y: b.y,
+            w: b.w,
+            h: b.h,
+            source: 'human' as const,
+            authorId: session.user.id,
+          })),
+        });
+      }
     });
 
-    return NextResponse.json({ updatedAt: refreshed.updatedAt });
+    return NextResponse.json({ updatedAt: now.toISOString() });
   } catch (e) {
     if (e instanceof HttpError) {
       return NextResponse.json({ error: e.message }, { status: e.status });

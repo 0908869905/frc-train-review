@@ -61,10 +61,11 @@ export function Editor(p: Props) {
     [boxes]
   );
 
-  // Clear selected and undo stack when imageId changes.
+  // Clear selected, undo stack, submitted flag when imageId changes.
   useEffect(() => {
     undoStackRef.current = [];
     setSelectedId(null);
+    submittedRef.current = false;
   }, [p.imageId]);
 
   const counts = useMemo(() => {
@@ -105,6 +106,10 @@ export function Editor(p: Props) {
   // round trip when current boxes ref-equals this (nothing to persist).
   const lastSavedBoxesRef = useRef<Box[]>(p.initialBoxes);
 
+  // Marks this editor as "already submitted this image"; unmount flush then
+  // skips doSave (server state is already `annotated` → PATCH would 409).
+  const submittedRef = useRef(false);
+
   // Perform the save; return whether we ended up with all pending changes persisted.
   // If a save is already in flight, await it first — then kick off a fresh save
   // with the LATEST boxes. Prevents silent data loss on rapid ←/→/S navigation.
@@ -133,6 +138,10 @@ export function Editor(p: Props) {
         });
         if (res.ok) {
           const json = await res.json();
+          // Sync ref synchronously — callers that await inFlightSave then read
+          // updatedAtRef (e.g. submit) must not pick up the stale value while
+          // React waits to commit the setUpdatedAt render.
+          updatedAtRef.current = json.updatedAt;
           setUpdatedAt(json.updatedAt);
           lastSavedBoxesRef.current = snapshot;
           setStatus('saved');
@@ -189,26 +198,48 @@ export function Editor(p: Props) {
 
   const submit = useCallback(async () => {
     if (readOnly) return;
-    const ok = await flushSave();
-    if (!ok) return;
+    // Cancel pending autosave debounce — we're about to persist inline.
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    // Wait for any in-flight autosave so updatedAtRef matches the server.
+    if (inFlightSave.current) {
+      const ok = await inFlightSave.current;
+      if (!ok) return; // doSave already set status
+    }
     setStatus('submitting...');
     const res = await fetch(`/api/images/${p.imageId}/submit`, {
       method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        lastKnownUpdatedAt: updatedAtRef.current,
+        boxes: boxesRef.current.map((b) => ({
+          classIdx: b.classIdx,
+          x: b.x,
+          y: b.y,
+          w: b.w,
+          h: b.h,
+        })),
+      }),
     });
     if (res.ok) {
+      submittedRef.current = true;
       if (nextId) router.push(`/annotate/${nextId}`);
       else router.push('/');
-    } else if (res.status === 401) {
+      return;
+    }
+    if (res.status === 401) {
       setStatus('session expired — redirecting…');
       window.location.href = '/login';
-    } else {
-      const msg = await res
-        .json()
-        .then((j) => j?.error as string | undefined)
-        .catch(() => undefined);
-      setStatus(msg ? `submit failed: ${msg}` : 'submit failed');
+      return;
     }
-  }, [p.imageId, nextId, router, flushSave, readOnly]);
+    const msg = await res
+      .json()
+      .then((j) => j?.error as string | undefined)
+      .catch(() => undefined);
+    setStatus(msg ? `submit failed: ${msg}` : 'submit failed');
+  }, [p.imageId, nextId, router, readOnly]);
 
   const promoteBatch = useCallback(async () => {
     const ok = await flushSave();
@@ -265,7 +296,7 @@ export function Editor(p: Props) {
         clearTimeout(saveTimer.current);
         saveTimer.current = null;
       }
-      if (readOnly) return;
+      if (readOnly || submittedRef.current) return;
       // Fire-and-forget; we can't await here.
       doSave();
     };

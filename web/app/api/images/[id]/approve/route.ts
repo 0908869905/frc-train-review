@@ -3,7 +3,6 @@ import { prisma } from '@/lib/db';
 import { getSession } from '@/lib/session';
 import { authzOr401 } from '@/lib/rbac';
 import { nextState } from '@/lib/state-machine';
-import { writeAudit } from '@/lib/audit';
 
 export async function POST(
   req: Request,
@@ -39,6 +38,5 @@ export async function POST(
     }
   });
 
-  await writeAudit(session!.user.id, 'image.approve', 'image', id, {});
   return NextResponse.json({ ok: true });
 }
