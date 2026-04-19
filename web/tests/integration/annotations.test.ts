@@ -163,6 +163,31 @@ describe('POST /api/images/[id]/submit', () => {
     expect(batch.state).toBe('in_annotation');
   });
 
+  it('keeps submits as annotated after partial-promote flipped batch to under_review', async () => {
+    // Regression: a previous fast-path wrote fresh submits directly to
+    // under_review when the batch was already promoted, which dropped them
+    // out of the annotator queue and caused "Illegal submit from under_review"
+    // when the annotator navigated back. Submits must always land on
+    // `annotated` so the queue filter + editor read-only check stay coherent.
+    await prisma.batch.update({
+      where: { id: batchId },
+      data: { state: 'under_review' },
+    });
+    const { POST } = await import('@/app/api/images/[id]/submit/route');
+    const res = await POST(new Request('http://x', { method: 'POST' }), {
+      params: Promise.resolve({ id: imageId }),
+    });
+    expect(res.status).toBe(200);
+    const img = await prisma.image.findUniqueOrThrow({
+      where: { id: imageId },
+    });
+    expect(img.state).toBe('annotated');
+    const batch = await prisma.batch.findUniqueOrThrow({
+      where: { id: batchId },
+    });
+    expect(batch.state).toBe('under_review');
+  });
+
   it('enters review when last image is submitted', async () => {
     const { POST } = await import('@/app/api/images/[id]/submit/route');
     await POST(new Request('http://x', { method: 'POST' }), {

@@ -57,14 +57,9 @@ export async function POST(
         throw new HttpError(403, 'Not your image');
       }
 
-      // If the batch is already under review (due to a prior partial
-      // promote), fresh submits skip the `annotated` intermediate state so
-      // the reviewer sees them immediately.
-      const batchPromoted = img.batch.state === 'under_review';
-
       let newState: 'annotated' | 'under_review';
       if (img.state === 'assigned' && canTransition('assigned', 'submit')) {
-        newState = batchPromoted ? 'under_review' : 'annotated';
+        newState = 'annotated';
       } else if (
         img.state === 'needs_rework' &&
         canTransition('needs_rework', 'resubmit')
@@ -115,10 +110,9 @@ export async function POST(
         });
       }
 
-      // Only need to check batch completion if we flipped to `annotated`
-      // (still waiting for the whole batch); if newState === 'under_review'
-      // either batch was already promoted or it's a resubmit of a previously
-      // rejected image — no batch.state transition needed here.
+      // Only need to check batch completion if we flipped to `annotated`;
+      // newState === 'under_review' only happens on resubmit of a previously
+      // rejected image — handled by the reject-all recovery branch below.
       if (newState === 'annotated') {
         const remaining = await tx.image.count({
           where: { batchId: img.batchId, state: { not: 'annotated' } },

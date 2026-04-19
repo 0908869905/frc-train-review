@@ -40,12 +40,19 @@ type Props = {
 
 export function Editor(p: Props) {
   const router = useRouter();
-  const readOnly = p.imageState === 'annotated';
+  const readOnly =
+    p.imageState === 'annotated' || p.imageState === 'under_review';
   const [boxes, setBoxes] = useState<Box[]>(p.initialBoxes);
   const [activeIdx, setActiveIdx] = useState(0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState(p.initialUpdatedAt);
-  const [status, setStatus] = useState(readOnly ? 'submitted (read-only)' : 'saved');
+  const [status, setStatus] = useState(
+    p.imageState === 'under_review'
+      ? '已送審核（唯讀）'
+      : p.imageState === 'annotated'
+        ? 'submitted (read-only)'
+        : 'saved',
+  );
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Undo stack lives entirely in a ref — no UI depends on it, so no useState needed.
@@ -507,10 +514,12 @@ export function Editor(p: Props) {
             <Button variant="outline" onClick={promoteBatch}>
               送出目前進度給審核
             </Button>
-            {readOnly ? (
+            {p.imageState === 'annotated' ? (
               <Button variant="outline" onClick={unsubmit}>
                 解鎖重標
               </Button>
+            ) : p.imageState === 'under_review' ? (
+              <span className="text-xs text-gray-500 px-2">已送審核</span>
             ) : (
               <Button onClick={submit}>Submit &amp; next (S)</Button>
             )}
