@@ -32,6 +32,7 @@ export default async function ReviewBatchPage({
 
   return (
     <ReviewTray
+      batchId={batch.id}
       batchName={batch.name}
       projectName={batch.project.name}
       classes={classes}

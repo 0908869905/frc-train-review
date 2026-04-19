@@ -35,11 +35,13 @@ const OTHER = '其他';
 const PREFETCH_AHEAD = 3;
 
 export function ReviewTray({
+  batchId,
   batchName,
   projectName,
   classes,
   images,
 }: {
+  batchId: string;
   batchName: string;
   projectName: string;
   classes: ClassDef[];
@@ -51,6 +53,10 @@ export function ReviewTray({
   const [rejectChoice, setRejectChoice] = useState<string>('');
   const [rejectOther, setRejectOther] = useState('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [rejectAllOpen, setRejectAllOpen] = useState(false);
+  const [rejectAllChoice, setRejectAllChoice] = useState<string>('');
+  const [rejectAllOther, setRejectAllOther] = useState('');
+  const [rejectAllBusy, setRejectAllBusy] = useState(false);
 
   const current = images[idx];
 
@@ -128,9 +134,43 @@ export function ReviewTray({
       });
   }
 
+  const openRejectAll = useCallback(() => {
+    setRejectAllChoice('');
+    setRejectAllOther('');
+    setRejectAllOpen(true);
+  }, []);
+
+  const finalRejectAllComment =
+    rejectAllChoice === OTHER ? rejectAllOther.trim() : rejectAllChoice;
+  const canConfirmRejectAll =
+    finalRejectAllComment.length > 0 && !rejectAllBusy;
+
+  async function confirmRejectAll() {
+    if (!canConfirmRejectAll) return;
+    setRejectAllBusy(true);
+    try {
+      const res = await fetch(`/api/batches/${batchId}/reject-all`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ comment: finalRejectAllComment }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setErrorMsg(body.error ?? `reject-all failed (${res.status})`);
+        setRejectAllBusy(false);
+        return;
+      }
+      setRejectAllOpen(false);
+      router.push('/');
+    } catch {
+      setErrorMsg('reject-all failed — network error');
+      setRejectAllBusy(false);
+    }
+  }
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (rejectOpen) return;
+      if (rejectOpen || rejectAllOpen) return;
       if (e.code === 'Space') {
         e.preventDefault();
         approve();
@@ -139,7 +179,7 @@ export function ReviewTray({
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [approve, openReject, rejectOpen]);
+  }, [approve, openReject, rejectOpen, rejectAllOpen]);
 
   if (!current) {
     return (
@@ -149,11 +189,20 @@ export function ReviewTray({
 
   return (
     <div className="h-screen flex flex-col">
-      <header className="px-4 py-2 border-b text-xs flex justify-between text-gray-600">
+      <header className="px-4 py-2 border-b text-xs flex justify-between items-center text-gray-600">
         <span>
           {projectName} / {batchName} / {idx + 1} of {images.length}
         </span>
-        <span>Space approve · R reject</span>
+        <div className="flex items-center gap-3">
+          <span>Space approve · R reject</span>
+          <button
+            type="button"
+            onClick={openRejectAll}
+            className="px-2 py-1 border border-red-300 text-red-700 rounded hover:bg-red-50"
+          >
+            全部退回
+          </button>
+        </div>
       </header>
       {errorMsg && (
         <div className="px-4 py-2 bg-red-50 border-b border-red-200 text-xs text-red-800 flex justify-between items-center">
@@ -202,6 +251,63 @@ export function ReviewTray({
         </Button>
         <Button onClick={approve}>Approve (Space)</Button>
       </footer>
+
+      <Dialog
+        open={rejectAllOpen}
+        onOpenChange={(v) => !rejectAllBusy && setRejectAllOpen(v)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>把整批退回給標註者</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-gray-600">
+            此批尚未審核的圖（共 {images.length - idx} 張）將全部標為
+            needs_rework 退回標註者；已 approve 的保留。動作不可撤銷。
+          </p>
+          <div className="space-y-2">
+            {[...REJECT_PRESETS, OTHER].map((label) => (
+              <label
+                key={label}
+                className="flex items-center gap-2 rounded border border-neutral-200 px-3 py-2 text-sm cursor-pointer hover:bg-neutral-50 has-[:checked]:border-neutral-900 has-[:checked]:bg-neutral-50"
+              >
+                <input
+                  type="radio"
+                  name="reject-all-reason"
+                  value={label}
+                  checked={rejectAllChoice === label}
+                  onChange={() => setRejectAllChoice(label)}
+                  className="accent-neutral-900"
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+            {rejectAllChoice === OTHER && (
+              <Textarea
+                value={rejectAllOther}
+                onChange={(e) => setRejectAllOther(e.target.value)}
+                placeholder="請填寫退回原因"
+                autoFocus
+              />
+            )}
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setRejectAllOpen(false)}
+              disabled={rejectAllBusy}
+            >
+              取消
+            </Button>
+            <Button
+              onClick={confirmRejectAll}
+              disabled={!canConfirmRejectAll}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {rejectAllBusy ? '退回中…' : '確認全部退回'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
         <DialogContent>

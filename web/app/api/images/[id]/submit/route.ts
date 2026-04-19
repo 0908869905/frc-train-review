@@ -133,6 +133,17 @@ export async function POST(
             data: { state: 'under_review' },
           });
         }
+      } else if (
+        newState === 'under_review' &&
+        img.batch.state === 'in_annotation'
+      ) {
+        // Batch was sent back by reject-all (batch → in_annotation) and the
+        // annotator is now resubmitting one of the rejected images. Flip batch
+        // back so the reviewer dashboard picks it up again.
+        await tx.batch.update({
+          where: { id: img.batchId },
+          data: { state: 'under_review' },
+        });
       }
     });
 
