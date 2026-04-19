@@ -134,6 +134,7 @@ export async function POST(
       contentType: 'application/zip',
       addRandomSuffix: false,
       allowOverwrite: true,
+      multipart: true,
     });
     return NextResponse.json({
       url: result.url,
