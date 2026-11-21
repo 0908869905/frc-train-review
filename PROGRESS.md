@@ -423,7 +423,7 @@ systematic-debugging + env pinning。完整 pipeline：WSL2 Ubuntu 24.04 裝 min
 ## Session: 2026-04-19（第 13 次）
 
 ### 主題
-使用者在寫工程筆記 `C:\Users\USER\Downloads\Rebuilt工筆.docx`，Iteration 2 要寫自建標註平台 frc-train-review。需求：(1) 模仿原檔 docx 風格（Heading 2/3、Motivation/Evaluation/Pros-Cons 段落模式、mix 英中）; (2) 用純中文撰寫; (3) Claude 自動化進 production 網站（https://frc-annotation.vercel.app）截圖、保證圖片載入; (4) 審核 `frc6998`、admin `980415`。完成後使用者又要求把「Gemini 自動預標註」補進章節，因為那是自建網站的最大動機。
+使用者在寫工程筆記 `C:\Users\USER\Downloads\Rebuilt工筆.docx`，Iteration 2 要寫自建標註平台 frc-train-review。需求：(1) 模仿原檔 docx 風格（Heading 2/3、Motivation/Evaluation/Pros-Cons 段落模式、mix 英中）; (2) 用純中文撰寫; (3) Claude 自動化進 production 網站（https://frc-annotation.vercel.app）截圖、保證圖片載入; (4) 審核 `<已移除>`、admin `<已移除>`。完成後使用者又要求把「Gemini 自動預標註」補進章節，因為那是自建網站的最大動機。
 
 ### 執行模式
 非結構化 content production，但核心子任務（自動化擷取 Konva canvas 並嵌入 docx）全跑 systematic-debugging。整條 pipeline：chrome-in-chrome MCP → production 網站登入（使用者已是 Rick）→ html2canvas-pro 擷圖 → 本地 Python HTTP server 接收 POST → python-docx 嵌入。過程踩多層坑（Chrome 下載 silent block、Tailwind v4 lab() 色域、Konva canvas CORS taint），每層都走「症狀 → 追因 → 換方案」。章節重寫輪：先寫出 web 平台核心，被使用者提醒「Gemini 才是最大動機」、重讀 `auto_pipeline.py` / `compare_v2.py` / `compare_pro_vs_lite.py` 還原整條 offline pipeline、補入 Motivation 第 1 條 + 新段落 + 對照表更新。
@@ -625,7 +625,7 @@ systematic-debugging：從使用者症狀 → 搜尋錯誤訊息來源（`state-
 標註者（annotator）與審核者（reviewer）反應「按 S / Space 後切下一張太慢、圖片載入慢」。系統性 trace 三個流程（annotator S submit、reviewer Space approve、reviewer 圖片載入）的 DB round-trip + HTTP RTT 後，做一系列效能改動分兩個 commit 上 production。使用者最後確認「夠快了」，此主題暫停。
 
 ### 執行模式
-非結構化 hot-fix 形式，但過程跑 systematic-debugging skill：先 trace 三個流程每一步的 DB RT + HTTP RTT、識別瓶頸、排優先序、再實作。動手前用 `npx neonctl branches create` 建了 Neon branch `backup-2026-04-18-before-perf` (`br-withered-cell-amw3kxys`) 作為 rollback 保險。最後階段為了達到「幾乎無縫」需求再加碼 optimistic annotator submit。
+非結構化 hot-fix 形式，但過程跑 systematic-debugging skill：先 trace 三個流程每一步的 DB RT + HTTP RTT、識別瓶頸、排優先序、再實作。動手前用 `npx neonctl branches create` 建了 Neon branch `backup-2026-04-18-before-perf` (`<已移除>`) 作為 rollback 保險。最後階段為了達到「幾乎無縫」需求再加碼 optimistic annotator submit。
 
 ### 完成項目（兩個 commit，都已 push master、Vercel auto-deploy）
 
@@ -677,7 +677,7 @@ systematic-debugging：從使用者症狀 → 搜尋錯誤訊息來源（`state-
 兩個 commit 都已 push origin master，Vercel auto-deploy 觸發。
 
 ### Rollback 準備
-- Neon branch `backup-2026-04-18-before-perf` (`br-withered-cell-amw3kxys`) 保留中；一兩天穩定後可刪
+- Neon branch `backup-2026-04-18-before-perf` (`<已移除>`) 保留中；一兩天穩定後可刪
 
 ### 遇到的事件
 - 無新 error；使用者最後確認「夠快了」，此主題暫停
@@ -726,7 +726,7 @@ Bug：當 annotator 按下「送出目前進度給審核」時身上一張 `anno
 ### DB 證據（prod Neon）
 - batch id `cmo3x1xkt03oi0oucj8bnqwoz`, 隊員I-1, 114 張
 - 診斷時分佈：assigned 113 / under_review 1
-- audit log: `2026-04-18T15:52:37Z batch.promote by 413061隊員I payload={"promotedImages":0}`
+- audit log: `2026-04-18T15:52:37Z batch.promote by <已移除>隊員I payload={"promotedImages":0}`
 
 ### 修復
 **程式**（commit `fcfc0ae`，已 push master，Vercel auto-deploy）
@@ -877,21 +877,21 @@ Bug：當 annotator 按下「送出目前進度給審核」時身上一張 `anno
 
 **3. web user mapping 全員 1:1 對上**
 - 每個 Drive 資料夾名都能 substring-match 唯一一位 `user.name`，無須手動 mapping
-- 新 owner `隊員B` → web user `313036隊員B` (hs313036)
+- 新 owner `隊員B` → web user `<已移除>隊員B` (<帳號>)
 
 **4. import-per-owner.ts 五代修復（見下方「修改檔案」）**
 
 **5. 最終 DB 狀態**
 - Project `cmo3vzz8b0000i8uccnfevhkt` 從 23 → 31 batches（全部 `state=in_annotation`）
 - 新增 8 batch：`隊員A-1/-2`、`隊員B-1/-2`、`隊員C-4/-5/-6/-7`
-- Append 4 batch：`Anna-1/-2`（各 +1）、`隊員D`（+151）、`隊員C-3`（+38）
+- Append 4 batch：`隊友-1/-2`（各 +1）、`隊員D`（+151）、`隊員C-3`（+38）
 - 21 batch 原樣 skip（全部 stem 都已在 DB）
-- 總計 4909 imgs 分派給 11 位 owner。各 owner 總數：Anna 423、隊員A 417、隊員E 470、隊員F 467、隊員B 582、隊員G 204、隊員H 420、隊員D 278、隊員C 295、隊員I 677、隊員J 676
+- 總計 4909 imgs 分派給 11 位 owner。各 owner 總數：隊友 423、隊員A 417、隊員E 470、隊員F 467、隊員B 582、隊員G 204、隊員H 420、隊員D 278、隊員C 295、隊員I 677、隊員J 676
 
 ### 修改檔案（本 session，未 commit）
 - `web/scripts/import-per-owner.ts` — 主修，五個獨立改動：
   1. **Global project-wide stem-level skip**（取代原本的 per-batch-name skip）— 用 `globalExistingFilenames` Set 比對 project 所有 `Image.blobPath` 的 basename，避免 repack rename sub-batches 造成 duplicate
-  2. **`decodeURIComponent` 修正**— Vercel Blob 把中文檔名 URL-encode（例 `%E5%90%B3%E8%A1%A3%E7%B5%9C__...`），要 decode 後才能跟原生 UTF-8 zip entry name 比對
+  2. **`decodeURIComponent` 修正**— Vercel Blob 把中文檔名 URL-encode（例 `%E9%9A%8A%E5%93%A1A__...`），要 decode 後才能跟原生 UTF-8 zip entry name 比對
   3. **`DATABASE_URL = DATABASE_URL_UNPOOLED` env swap**— 在 `import` lib/db 之前 swap，長時間大量 INSERT 下走 pooler 會被 Neon 斷 WebSocket
   4. **CONCURRENCY 8 → 4**— 進一步降載
   5. **`updateMany { where: { batchId, state: 'unassigned' } }`**— 原本只 update `imageIds`，遇到中斷 orphan unassigned 會殘留；改全 batch 掃
@@ -1080,7 +1080,7 @@ Bug：當 annotator 按下「送出目前進度給審核」時身上一張 `anno
 - 用戶升 Pro $20/mo 100GB（現用 ~1.5GB 充裕），import 繼續完成
 
 **3. DB 安全防護三層架構**（防 Neon production DB 再被 `prisma db push` 砸掉）
-- **第一層 dev branch 隔離**：新增 `web/.env.local` 切換 DATABASE_URL host 從 prod (`ep-holy-moon-amdsve0e`) → dev branch (`ep-cold-bar-amyk8qgq`)，同 password 只換 host fragment
+- **第一層 dev branch 隔離**：新增 `web/.env.local` 切換 DATABASE_URL host 從 prod (`<已移除>`) → dev branch (`<已移除>`)，同 password 只換 host fragment
 - **第二層 runtime 警告**：新增 `web/scripts/check-db.ts` — 印出當前 DATABASE_URL host + 警告字樣
 - **第三層 written rule**：更新 `web/CLAUDE.md` — 寫死 prod 禁止指令清單、script 環境選擇規則、唯一允許的 schema 變更流程、Neon PITR 復原管道
 
@@ -1102,8 +1102,8 @@ Bug：當 annotator 按下「送出目前進度給審核」時身上一張 `anno
 
 ### 當前 DB 狀態（Neon main = prod）
 - 1 active project：`cmo3vzz8b0000i8uccnfevhkt`（23 batches、3775 imgs in_annotation）
-- 15 users（10 annotator owners + 4 admin/其他 + 1 身份不明 Uhjjj 6）
-- Neon dev branch `ep-cold-bar-amyk8qgq` 留作將來 schema 操作 sandbox
+- 15 users（10 annotator owners + 4 admin/其他 + 1 身份不明 <帳號>）
+- Neon dev branch `<已移除>` 留作將來 schema 操作 sandbox
 
 ### 遇到的事件
 - Vercel Blob Hobby quota 撞牆（1GB max）→ 升 Pro 解決
@@ -1112,14 +1112,14 @@ Bug：當 annotator 按下「送出目前進度給審核」時身上一張 `anno
 ### 下一步
 1. **等標註者實際進入 web 開審** — 已配對指派完成，缺實際 review traffic 才能評估流程瓶頸
 2. **累積一輪 reject 反饋後決定 GPU train timing** — M7.7 GPU 驗證原本就排在真實 review 完成後
-3. （可選）清掉 Uhjjj 6 不明帳號
-4. （可選）Phi / 段佑霖 仍缺 Drive 資料夾，補資料後可加進下一輪 import
+3. （可選）清掉 <帳號> 不明帳號
+4. （可選）隊友 / 隊友 仍缺 Drive 資料夾，補資料後可加進下一輪 import
 
 ### 5-Question Reboot Check
 1. **做什麼？** FRC 自動標註 pipeline 端對端跑通到 web review 階段
 2. **進度？** 23 batches、3775 imgs 已 import 並指派完成，等標註者開始審
 3. **下一步？** 等標註者實際進入 web 標 → 累積一輪 reject 反饋後再決定 GPU train timing
-4. **阻礙？** 無；Phi / 段佑霖 仍缺 Drive 資料夾、Uhjjj 6 身份不明（可選清掉）
+4. **阻礙？** 無；隊友 / 隊友 仍缺 Drive 資料夾、<帳號> 身份不明（可選清掉）
 5. **關鍵檔案？** `web/scripts/import-per-owner.ts`、`auto_pipeline.py`、`repack_per_owner.py`、`web/CLAUDE.md`（DB 安全章節）
 
 ---
@@ -1240,17 +1240,17 @@ Continuation of plan `C:\Users\USER\.claude\plans\sprightly-jingling-lemur.md`�
 **1. Stage 2 preprocess（2538 張 jpg 產出，修 cv2 Unicode bug）**
 - 發現 `cv2.imwrite` 在 Windows 非 ASCII 路徑上 **silently 失敗**（回傳 False 但不拋例外）
 - 影響中文 owner 資料夾（隊員F / 隊員H / 隊員D / 隊員J）的影片抽幀 — state file 有紀錄但 disk 上 0 檔案
-- Anna（ASCII 路徑）與純靜態照片 owner（隊員C / 隊員I，走 PIL 路徑）未受影響
+- 英文名的隊友（ASCII 路徑）與純靜態照片 owner（隊員C / 隊員I，走 PIL 路徑）未受影響
 - 修法：`cv2.imencode(".jpg", frame, ...)` + `Path.write_bytes(buf.tobytes())`，繞過 cv2 C-stdio 對 Unicode path 不支援
 - 修 `preprocess_state.json` + 各 owner `source.json`，清掉 outputs-不存在的壞紀錄（移除 8 entries，保留 793）
 - 改 `python -u`（unbuffered）讓 `tee` 看得到即時 progress
 
 **2. Stage 3 Gemini 自動標註（2538 張，約 25 分，0 errors，82,423 boxes）**
 - 初期 API key 全失敗（HTTP 400 `API_KEY_INVALID`）
-- 使用者貼的 `AQ.Ab8RN6KI...` token 是 OAuth 2.0 access token，不是 API key。Gemini API key 必為 `AIzaSy` 開頭 + 39 chars + 純英數+底線，要從 https://aistudio.google.com/app/apikey 產生
+- 使用者貼的 `AQ.<已移除>...` token 是 OAuth 2.0 access token，不是 API key。Gemini API key 必為 `AIzaSy` 開頭 + 39 chars + 純英數+底線，要從 https://aistudio.google.com/app/apikey 產生
 - 換新 key `***REMOVED***`（export 到當前 bash session，未 setx）
 - 加 `--limit N` flag 方便小樣本驗證
-- 先跑 20 張 sample（Anna IMG_3587），0 error，703 boxes 全 class=fuel — 驗證 fuel 偵測 recall 穩
+- 先跑 20 張 sample（隊友 IMG_3587），0 error，703 boxes 全 class=fuel — 驗證 fuel 偵測 recall 穩
 - Preview 發現 FP 模式：紅色練習墊 → red_robot、藍色 pool noodle → blue_robot。素材多是 fuel 練球場景，真 robot 很少
 - 全量 2518 張剩餘，concurrency 10，**1.8 img/s，約 25 分，0 errors**
 - Class 分布：red_robot 849 / blue_robot 336 / fuel 81,238（98.6%）。R:B 比 2.5:1 不合理（應為 FP 道具），人審階段會清掉
@@ -1290,9 +1290,9 @@ Continuation of plan `C:\Users\USER\.claude\plans\sprightly-jingling-lemur.md`�
 3. Assign annotators、通知複審
 
 **Pipeline 側（可選優化，非阻塞）**：
-- Anna 的全 fuel 練球場景考慮單獨 review 流程（全類 fuel 不需要 robot 判斷）
+- 隊友的全 fuel 練球場景考慮單獨 review 流程（全類 fuel 不需要 robot 判斷）
 - 補上游過濾排除紅 / 藍道具 FP（或 prompt 加「排除泡棉墊、pool noodle」提示）
-- `rclone lsf "gdrive:frc視覺辨識/Phi" --drive-shared-with-me` 等等驗證缺 4 owner 是空資料夾還是權限問題
+- `rclone lsf "gdrive:frc視覺辨識/隊友" --drive-shared-with-me` 等等驗證缺 4 owner 是空資料夾還是權限問題
 
 ### 阻礙
 無。Stage 2–4 整條走通，產物 ready for 人審。
@@ -1313,7 +1313,7 @@ Continuation of plan `C:\Users\USER\.claude\plans\sprightly-jingling-lemur.md`�
 ### 安全備註
 - Gemini API key `***REMOVED***`（新）貼在 chat 裡，只 export 未 setx，下次 bash session 會不見 — 要跑 pipeline 得重貼或 setx
 - 上一把 `AIzaSyB...` 可能 rate limit / revoke，新 key 為 working one
-- User 貼的 `AQ.Ab8RN6KI...` 是 OAuth access token 不是 API key（已提醒），與本 pipeline 無關但記一下
+- User 貼的 `AQ.<已移除>...` 是 OAuth access token 不是 API key（已提醒），與本 pipeline 無關但記一下
 
 ---
 
@@ -1344,8 +1344,8 @@ Plan-driven。Plan 檔:`C:\Users\USER\.claude\plans\sprightly-jingling-lemur.md`
 
 **3. Stage 1 Drive download 跑完(31 分 50 秒)**
 - `rclone copy gdrive:frc視覺辨識/ datasets/frc-vision-raw/_drive_copy/ --drive-shared-with-me ...`
-- 結果:**807 個檔案 / 5.15 GiB**,7 個擁有者資料夾(Anna / 隊員F / 隊員H / 隊員D / 隊員C / 隊員I / 隊員J)
-- **意外 1**:預期 11 個資料夾,只下來 7 個 — 缺 Phi / 隊員A / 隊員B / 段佑霖。假設是空資料夾(rclone 不建空目錄),下 session 用 `rclone lsf` 驗證
+- 結果:**807 個檔案 / 5.15 GiB**,7 個擁有者資料夾(隊友 / 隊員F / 隊員H / 隊員D / 隊員C / 隊員I / 隊員J)
+- **意外 1**:預期 11 個資料夾,只下來 7 個 — 缺隊友 / 隊員A / 隊員B / 隊友。假設是空資料夾(rclone 不建空目錄),下 session 用 `rclone lsf` 驗證
 - **意外 2**:初次 `rclone size` 量到 3.73 GiB / 477 files,實際下載完 5.15 GiB / 807 files。可能 sessions 之間有人補傳,或初次 size 量不完整
 
 ### 修改檔案
@@ -1366,11 +1366,11 @@ Plan-driven。Plan 檔:`C:\Users\USER\.claude\plans\sprightly-jingling-lemur.md`
 1. **Stage 2 preprocess** — `python auto_pipeline.py preprocess`:HEIC→JPEG、影片 1 fps 抽幀、寫 `preprocess_state.json`
 2. **Stage 3 annotate** — 先小樣本(例如 20 張)驗證 Gemini 輸出品質,看完 OK 再全跑
 3. **Stage 4 package** — 切 batch、產 YOLO zip、印絕對路徑
-4. **解開「缺 4 owners」謎團** — `rclone lsf "gdrive:frc視覺辨識/Phi" --drive-shared-with-me` 等等,確認是空資料夾 or 權限差異
+4. **解開「缺 4 owners」謎團** — `rclone lsf "gdrive:frc視覺辨識/隊友" --drive-shared-with-me` 等等,確認是空資料夾 or 權限差異
 5. **Stage 4 跑完**手動上傳第一個 batch.zip 到 production web 平台,實測整條 pipeline
 
 ### 阻礙
-- 缺 4 個擁有者資料夾(Phi / 隊員A / 隊員B / 段佑霖) — 待 user 確認是空資料夾還是權限問題,不是 hard blocker(其他 7 人的 5.15 GiB 已夠跑 pipeline)
+- 缺 4 個擁有者資料夾(隊友 / 隊員A / 隊員B / 隊友) — 待 user 確認是空資料夾還是權限問題,不是 hard blocker(其他 7 人的 5.15 GiB 已夠跑 pipeline)
 
 ### 5-Question Reboot Check
 1. **做什麼?** 執行 plan `C:\Users\USER\.claude\plans\sprightly-jingling-lemur.md` — Drive → Gemini → web batch zip 自動標註 pipeline
@@ -1444,7 +1444,7 @@ e1c5f0d feat(web): preset reject reasons with custom "其他" fallback
 ```
 
 ### 下一步
-1. **等 hs313102 使用者首次登入驗證 role 繼承** — 登入後他應看到 Review 連結、沒看到 Projects/Admin
+1. **等 <帳號> 使用者首次登入驗證 role 繼承** — 登入後他應看到 Review 連結、沒看到 Projects/Admin
 2. **等使用者實測 reject preset UX** — 若有使用者抱怨「菜就多練」太硬核，再調整文案
 3. **選配**:aggregate ReviewEvent.comment 做統計 — 每個 annotator 最常被退回的原因。目前沒需求，純 idea
 4. **選配**:onboarding name 頁之外若還有類似「server update session state → 前端要即時跳轉」的流程，掃一遍是否也該改成 full-page nav
@@ -1453,9 +1453,9 @@ e1c5f0d feat(web): preset reject reasons with custom "其他" fallback
 無 blocker。
 
 ### 5-Question Reboot Check
-1. **做什麼?** 三件小事：(a) 用 set-role script 把 hs313102 加入白名單 final_reviewer；(b) 修首次登入輸入名字不跳轉（改 full-page nav）；(c) Reject dialog 加 6 個預設原因選項
+1. **做什麼?** 三件小事：(a) 用 set-role script 把 <帳號> 加入白名單 final_reviewer；(b) 修首次登入輸入名字不跳轉（改 full-page nav）；(c) Reject dialog 加 6 個預設原因選項
 2. **進度?** 2 commit push master + 1 筆 production whitelist upsert。Vercel auto-deploy 完成
-3. **下一步?** 等使用者實測 reject UX + hs313102 首次登入拿到正確 role
+3. **下一步?** 等使用者實測 reject UX + <帳號> 首次登入拿到正確 role
 4. **阻礙?** 無 blocker
 5. **檔案?**
    - `web/app/(protected)/onboarding/name/name-form.tsx`（full-page nav fix）
@@ -1536,7 +1536,7 @@ Inline rapid iteration — 每個 fix 單一 commit 直接 push master，讓 Ver
 - `web/app/(protected)/annotate/[imageId]/editor.tsx`（a5b6a71）— router.prefetch + flushSave no-op skip
 
 ### Production DB 變更（不在 git 裡）
-- EmailWhitelist + User.role 改 4 筆:rosalyn admin、hs219014 final_reviewer、eva final_reviewer、baconfried final_reviewer（via whitelist only）
+- EmailWhitelist + User.role 改 4 筆:<帳號> admin、<帳號> final_reviewer、<帳號> final_reviewer、<帳號> final_reviewer（via whitelist only）
 
 ### 核心設計決策（供未來 session 快速 recall）
 1. **權限分層**:admin 管 projects/batches/export/whitelist；final_reviewer 管 review approve/reject；annotator 只做 annotate/submit。UI nav 用 role 白名單分別顯示
@@ -1832,14 +1832,14 @@ Production 平台（`https://frc-annotation.vercel.app`）端到端冒煙測試�
 - 選配 `NEXT_PUBLIC_APP_URL` / `UPSTASH_*` 仍未設
 
 ### 下一步
-1. **使用者端到端實測**（rosalyn 帳號 fresh login）：top nav + Sign out、Projects → 建 `2026inmis-bumper`（classes: Red(r) / Blue(b)，順序不可錯）→ New batch → 上傳 `test_batch_8.zip` → 自我分派 → 標註 → submit → `/review` + `frc6998` 覆核 → export
+1. **使用者端到端實測**（<帳號> 帳號 fresh login）：top nav + Sign out、Projects → 建 `2026inmis-bumper`（classes: Red(r) / Blue(b)，順序不可錯）→ New batch → 上傳 `test_batch_8.zip` → 自我分派 → 標註 → submit → `/review` + `<已移除>` 覆核 → export
 2. **選配**：若使用者想用單一 "bumper" class 而非 Red/Blue 拆兩 class,需重產 test zip 做 class remapping（本 session 未做）
 3. **選配**：連 Upstash Redis（step-up rate-limit 跨 instance 持久化）+ 設 `NEXT_PUBLIC_APP_URL` 讓 step-up CSRF origin check 生效
 
 ### 5-Question Reboot Check
 1. **做什麼？** Production 冒煙測試發現兩個 blocker（`/admin` 404 + `/review` role gate），使用者決策 drop role-based RBAC 改以 step-up 密碼為唯一閘門。後續擴充：global top nav、New batch 按鈕、Export 按鈕、修 `/admin/members` 看不見新登入使用者的 bug。產出端到端測試 zip。
 2. **進度？** 4 個 commit 全 push、Vercel auto-deploy 綠（跑在 `00b6fce`）、93/93 tests + build + lint 綠。`test_batch_8.zip` ready。
-3. **下一步？** 使用者用 rosalyn 帳號跑完整端到端實測（建專案 → 上傳 zip → 分派 → 標註 → submit → 覆核 → export）。
+3. **下一步？** 使用者用 <帳號> 帳號跑完整端到端實測（建專案 → 上傳 zip → 分派 → 標註 → submit → 覆核 → export）。
 4. **阻礙？** 無技術 blocker。等使用者實測。若要單一 class bumper 專案需重產 zip。
 5. **檔案？**
    - `web/lib/rbac.ts`（ACTION_SCOPE + requireAuthz + authzOr401）
@@ -1862,7 +1862,7 @@ Production 平台（`https://frc-annotation.vercel.app`）端到端冒煙測試�
 - 症狀：Google 登入後 Google 顯示 "Access Denied / You do not have permission to sign in"
 - 根因：`web/lib/auth.ts` 的 `signIn` callback 查不到 `EmailWhitelist` row 就 `return false`，Google OAuth 回給用戶 AccessDenied
 - 修法：改為「白名單找不到 → fallback role = `annotator`」；白名單保留作為「指定某些 email 為 admin / final_reviewer」的晉升機制，不再擋人
-- 安全論證：reviewer / admin 頁面仍有 step-up 密碼（`frc6998` / `980415`）擋著，開放 annotator 門檻 ≠ 開放 reviewer / admin 操作
+- 安全論證：reviewer / admin 頁面仍有 step-up 密碼（`<已移除>` / `<已移除>`）擋著，開放 annotator 門檻 ≠ 開放 reviewer / admin 操作
 
 **修復 2：Vercel production auto-deploy 失敗**
 - 症狀：push 到 master 後 Vercel auto-deploy 報 `No Next.js version detected. Make sure your package.json has "next" in either "dependencies" or "devDependencies"`；其實上一個 docs commit `1440204`（上 session 結尾）的 auto-deploy 也已經壞過，當時被 CLI 手動 deploy 覆蓋沒注意到
@@ -1877,7 +1877,7 @@ Production 平台（`https://frc-annotation.vercel.app`）端到端冒煙測試�
 - `092d745 feat(web): remove email whitelist gate at sign-in`（已 push，觸發 auto-deploy；修 Root Directory 後 redeploy 成功）
 
 ### 下一步
-1. **使用者仍需 Gmail 端到端驗證**（現在應該真的能登入了）— onboarding 填中文姓名、進 `/review` 輸 `frc6998`、進 `/admin` 輸 `980415`、`/admin/members` 新增成員、reviewer 匯出 zip
+1. **使用者仍需 Gmail 端到端驗證**（現在應該真的能登入了）— onboarding 填中文姓名、進 `/review` 輸 `<已移除>`、進 `/admin` 輸 `<已移除>`、`/admin/members` 新增成員、reviewer 匯出 zip
 2. 登入後於 `/projects/new` 建 `bumper`(shortcut `b`)+`fuels`(shortcut `f`) 專案
 3. **選配**：連 Upstash Redis（否則 step-up rate limit 只在 in-memory、多 instance 無效）
 4. **選配**：把 `NEXT_PUBLIC_APP_URL` 設為 prod URL 讓 step-up CSRF origin check 真正作用
@@ -1966,7 +1966,7 @@ Production 平台（`https://frc-annotation.vercel.app`）端到端冒煙測試�
 ### 部署（session 結尾）
 - `vercel git connect https://github.com/0908869905/frc-train-review.git` — Vercel `frc-annotation` project 接上 GitHub（未來 push master 會自動部署）
 - 第一次 `vercel deploy --prod --yes` → `https://frc-annotation-fyksxyone-0908869905s-projects.vercel.app`
-- 加 `REVIEWER_PASSWORD_HASH`（`frc6998` 的 argon2id）+ `ADMIN_PASSWORD_HASH`（`980415` 的 argon2id）到 Production/Preview/Development 三環境
+- 加 `REVIEWER_PASSWORD_HASH`（`<已移除>` 的 argon2id）+ `ADMIN_PASSWORD_HASH`（`<已移除>` 的 argon2id）到 Production/Preview/Development 三環境
 - `prisma migrate deploy`：prod Neon DB 已同步，0 pending
 - 第二次 `vercel deploy --prod` → aliased to `https://frc-annotation.vercel.app`
 - Smoke test：`/login` 200、`/` 307（redirect to /login）、`/api/auth/step-up?scope=reviewer` 未授權 401 ✓
@@ -2006,7 +2006,7 @@ Production 平台（`https://frc-annotation.vercel.app`）端到端冒煙測試�
 - `memory/feedback_autonomy.md`（新，使用者要求自主決策）
 
 ### 使用者未完成的動作
-- Gmail 端到端登入驗證（dev server 仍在 localhost:3000、prod 也 up）— 要驗 onboarding 填名、`/review` 輸 `frc6998`、`/admin` 輸 `980415`、`/admin/members` 新增成員、reviewer 匯出 zip
+- Gmail 端到端登入驗證（dev server 仍在 localhost:3000、prod 也 up）— 要驗 onboarding 填名、`/review` 輸 `<已移除>`、`/admin` 輸 `<已移除>`、`/admin/members` 新增成員、reviewer 匯出 zip
 - 在 production 建 `bumper`(shortcut `b`)+`fuels`(shortcut `f`) 專案（透過 UI）
 
 ### 下一步
@@ -2019,7 +2019,7 @@ Production 平台（`https://frc-annotation.vercel.app`）端到端冒煙測試�
 ### 5-Question Reboot Check
 1. **做什麼？** 在既有 FRC Annotation Review Platform 上實作三種角色介面（審核者/覆核者/管理員）+ step-up 雙層閘門 + 中文姓名 onboarding + 整合成員表 + reviewer 匯出 + 字母快捷鍵（bumper/fuels 的 b/f）。全流程 TDD + two-stage review（spec + code quality）。
 2. **進度？** 21 個 plan task 執行完成（P0-P5 + P7.3），7 個刪除（P6 Gemini 視覺套版 + P7.1/P7.2 Playwright E2E 依使用者決策跳過）。93/93 tests 綠。Production 已部署 `https://frc-annotation.vercel.app`，env vars 設妥，GitHub integration 啟用（未來 push master 自動部署）。
-3. **下一步？** (a) 使用者 Gmail 登入做端到端驗證（dev server 仍在 localhost:3000，prod 也 up）— onboarding 填名、進 /review 輸 `frc6998`、進 /admin 輸 `980415`、/admin/members 新增成員、reviewer 匯出 zip。(b) 登入後於 `/projects/new` 建 bumper(shortcut b)+fuels(shortcut f)專案。(c) 選配：Upstash Redis 連接（否則 step-up rate limit 為 in-memory、多 instance 無效）+ `NEXT_PUBLIC_APP_URL` 設為 prod URL 讓 CSRF origin check 生效。
+3. **下一步？** (a) 使用者 Gmail 登入做端到端驗證（dev server 仍在 localhost:3000，prod 也 up）— onboarding 填名、進 /review 輸 `<已移除>`、進 /admin 輸 `<已移除>`、/admin/members 新增成員、reviewer 匯出 zip。(b) 登入後於 `/projects/new` 建 bumper(shortcut b)+fuels(shortcut f)專案。(c) 選配：Upstash Redis 連接（否則 step-up rate limit 為 in-memory、多 instance 無效）+ `NEXT_PUBLIC_APP_URL` 設為 prod URL 讓 CSRF origin check 生效。
 4. **阻礙？** 無 blocker。selected-out 的 P6 視覺套版 + P7.1/P7.2 E2E 是未來可回頭補的空間。使用者尚未 Gmail 登入實測全流程。
 5. **檔案？**
    - `docs/superpowers/plans/2026-04-16-three-interfaces-step-up-auth.md`（plan，含所有 amendment notes）
@@ -2037,7 +2037,7 @@ Production 平台（`https://frc-annotation.vercel.app`）端到端冒煙測試�
 ## Session: 2026-04-16 (第 5 次)
 
 ### 主題
-在已上線的 FRC Annotation Review Platform（M0–M7 完成）之上，規劃「三種角色介面 + 雙層閘門登入」：審核者（Gmail SSO + 中文姓名 onboarding）、覆核者（額外密碼 `frc6998`）、管理員（額外密碼 `980415`）。本次 session 只走完 brainstorming + design spec + implementation plan 三步，**尚未寫實作程式碼**。
+在已上線的 FRC Annotation Review Platform（M0–M7 完成）之上，規劃「三種角色介面 + 雙層閘門登入」：審核者（Gmail SSO + 中文姓名 onboarding）、覆核者（額外密碼 `<已移除>`）、管理員（額外密碼 `<已移除>`）。本次 session 只走完 brainstorming + design spec + implementation plan 三步，**尚未寫實作程式碼**。
 
 ### 完成項目
 
@@ -2054,7 +2054,7 @@ Production 平台（`https://frc-annotation.vercel.app`）端到端冒煙測試�
 - 產出 `docs/superpowers/specs/2026-04-16-three-interfaces-step-up-auth-design.md`
 - Spec 自檢後發現原本規劃的 Auth.js v5 `unstable_update()` 做 server-initiated session update 不穩定
 - 改為**獨立 HMAC-signed httpOnly cookie** 機制（`stepup_reviewer` / `stepup_admin`，`Max-Age=3600`），與 Auth.js JWT 解耦、cookie payload 綁 userId 防 session fixation
-- 密碼儲存：`frc6998` / `980415` 經離線 `argon2id` 雜湊後放 Vercel env（`REVIEWER_PASSWORD_HASH` / `ADMIN_PASSWORD_HASH`），絕不進 DB、絕不進前端 bundle
+- 密碼儲存：`<已移除>` / `<已移除>` 經離線 `argon2id` 雜湊後放 Vercel env（`REVIEWER_PASSWORD_HASH` / `ADMIN_PASSWORD_HASH`），絕不進 DB、絕不進前端 bundle
 - Rate-limit：同 userId 1 分鐘 5 次、超過鎖 10 分鐘（production 用 Upstash Redis，dev/單 instance 降級 in-memory）
 - Audit log 記 `auth.stepup_granted` / `auth.stepup_failed`，失敗紀錄不存嘗試的密碼
 
@@ -2111,7 +2111,7 @@ Production 平台（`https://frc-annotation.vercel.app`）端到端冒煙測試�
 - M1.1 Auth.js v5 Google provider + signIn callback 白名單 + JWT role 傳播；`lib/db.ts` 改用 `PrismaNeon` adapter（Prisma 7 要求）
 - M1.2 `proxy.ts`（Next.js 16 middleware → proxy 改名）保護 `/login` 與 `/api/auth` 以外全部路由
 - M1.3 `/login` 頁面（極簡灰階 Google SSO 按鈕，無 indigo）
-- M1.4 `prisma/seed.ts` + `prisma.config.ts` 的 `migrations.seed`（Prisma 7 從 package.json 搬出來）；以 `94easystudio@gmail.com` 為初始 admin
+- M1.4 `prisma/seed.ts` + `prisma.config.ts` 的 `migrations.seed`（Prisma 7 從 package.json 搬出來）；以 `<email>` 為初始 admin
 - M1.5 `lib/rbac.ts` canPerform / requireRole（TDD 6 個 unit tests）
 - M1.6 `/admin/users` 頁 + API + test-only auth bypass（`lib/auth-test.ts` + `lib/session.ts` 採 lazy auth import 以避開 Vitest 解析 `next/server`）
 

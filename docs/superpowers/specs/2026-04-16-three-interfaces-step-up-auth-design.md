@@ -1,7 +1,7 @@
 # Three Interfaces + Step-up Auth — Design Spec
 
 **Date**: 2026-04-16
-**Author**: 94easystudio@gmail.com (via Claude Opus 4.6)
+**Author**: <email> (via Claude Opus 4.6)
 **Status**: Proposed — pending approval before implementation
 
 ## 背景與目標
@@ -13,8 +13,8 @@
 
 本次需求（user request, 2026-04-16）：
 1. 審核者（annotator）介面：Gmail 登入 + 姓名輸入欄
-2. 覆核者（final_reviewer）介面：覆核圖片並提交訓練，要設密碼 `frc6998`
-3. 管理員（admin）介面：看帳號/姓名、指派圖片，要設密碼 `980415`
+2. 覆核者（final_reviewer）介面：覆核圖片並提交訓練，要設密碼 `<已移除>`
+3. 管理員（admin）介面：看帳號/姓名、指派圖片，要設密碼 `<已移除>`
 4. 密碼不放前端、必須加密
 5. 視覺部分請與 Gemini 合作做出極簡、無 AI 味的介面
 
@@ -39,7 +39,7 @@
 ## 2. Auth / Session 機制
 
 ### 2.1 Step-up 密碼儲存
-- `frc6998`、`980415` **不進 DB、不進前端 bundle**
+- `<已移除>`、`<已移除>` **不進 DB、不進前端 bundle**
 - 用 `argon2id` 離線算出 hash，放 Vercel env：
   ```
   REVIEWER_PASSWORD_HASH=$argon2id$v=19$m=65536,t=3,p=4$...
@@ -75,7 +75,7 @@
 | 匯出 YOLO zip | admin / final_reviewer | ✅ `reviewer` |
 | 進 `/admin/*`、白名單 CRUD、指派、成員表 | admin | ✅ `admin` |
 
-Admin 若想進 reviewer 頁需輸 `frc6998`（不做隱晦的自動繼承，讓「當下想進哪個介面」決定要哪個密碼）。
+Admin 若想進 reviewer 頁需輸 `<已移除>`（不做隱晦的自動繼承，讓「當下想進哪個介面」決定要哪個密碼）。
 
 ## 3. 資料庫變更（最小化）
 
@@ -173,7 +173,7 @@ Admin 若想進 reviewer 頁需輸 `frc6998`（不做隱晦的自動繼承，讓
 - `POST /api/batches/[id]/assign`：admin 無 step-up → 403。
 
 ### 6.3 E2E（Playwright）
-- `step-up-reviewer.spec.ts`：模擬已登入 reviewer → 點匯出 → 跳 modal → 輸 `frc6998` → 下載可用。
+- `step-up-reviewer.spec.ts`：模擬已登入 reviewer → 點匯出 → 跳 modal → 輸 `<已移除>` → 下載可用。
 - `onboarding-name.spec.ts`：新使用者登入 → 自動重導 onboarding → 填名 → 進 dashboard。
 
 ### 6.4 安全清單

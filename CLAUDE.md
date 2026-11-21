@@ -17,7 +17,7 @@
    - 部署：Vercel（Root Directory = `web`），Production URL：https://frc-annotation.vercel.app
    - 程式庫：https://github.com/0908869905/frc-train-review （private）
    - **Git → Vercel auto-deploy**：Vercel 已接 GitHub repo（2026-04-17），push 到 `master` 會自動觸發 production deploy
-   - **必備環境變數**（production + preview + development 三環境）：`DATABASE_URL` / `DATABASE_URL_UNPOOLED` / `AUTH_SECRET` / `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` / `AUTH_TRUST_HOST` / `BLOB_READ_WRITE_TOKEN` / `REVIEWER_PASSWORD_HASH`（argon2id of `frc6998`）/ `ADMIN_PASSWORD_HASH`（argon2id of `980415`）/ `STEPUP_COOKIE_SECRET`；**選配**：`NEXT_PUBLIC_APP_URL`（讓 step-up CSRF origin check 生效）/ `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`（否則 step-up rate limit 降級 in-memory、多 instance 無效）
+   - **必備環境變數**（production + preview + development 三環境）：`DATABASE_URL` / `DATABASE_URL_UNPOOLED` / `AUTH_SECRET` / `AUTH_GOOGLE_ID` / `AUTH_GOOGLE_SECRET` / `AUTH_TRUST_HOST` / `BLOB_READ_WRITE_TOKEN` / `REVIEWER_PASSWORD_HASH`（argon2id of `<已移除>`）/ `ADMIN_PASSWORD_HASH`（argon2id of `<已移除>`）/ `STEPUP_COOKIE_SECRET`；**選配**：`NEXT_PUBLIC_APP_URL`（讓 step-up CSRF origin check 生效）/ `UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`（否則 step-up rate limit 降級 in-memory、多 instance 無效）
 
 ## 兩套 Pipeline 的邊界
 

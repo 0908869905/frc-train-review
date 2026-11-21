@@ -2504,7 +2504,7 @@ If the outer flex container is not yet `flex-1 flex bg-gray-50` (without `items-
 
 - [ ] **Step 2: Manual QA**
 
-Start dev server, sign in as admin or final_reviewer, enter step-up (`frc6998`), open `/review/[batchId]`:
+Start dev server, sign in as admin or final_reviewer, enter step-up (`<已移除>`), open `/review/[batchId]`:
 - Image renders, auto-fits.
 - Wheel zoom works. `f` fits. Middle/right-drag pans.
 - Clicking on a bbox does nothing visual (no selection ring, no handles).

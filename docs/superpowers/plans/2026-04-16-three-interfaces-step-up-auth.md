@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在既有 M0–M7 平台上加三層改動：(1) 首次 Gmail 登入後強制填真實姓名；(2) 進 `/review` 與 `/admin/*` 時彈 step-up 密碼 modal（`frc6998` / `980415`）；(3) 升級 `/admin/users` 為整合 `EmailWhitelist + User` 的成員表，並把 YOLO zip 匯出下放給 `final_reviewer`。
+**Goal:** 在既有 M0–M7 平台上加三層改動：(1) 首次 Gmail 登入後強制填真實姓名；(2) 進 `/review` 與 `/admin/*` 時彈 step-up 密碼 modal（`<已移除>` / `<已移除>`）；(3) 升級 `/admin/users` 為整合 `EmailWhitelist + User` 的成員表，並把 YOLO zip 匯出下放給 `final_reviewer`。
 
 **Architecture:** Step-up 密碼用 `argon2id` 離線雜湊成 env var（`REVIEWER_PASSWORD_HASH` / `ADMIN_PASSWORD_HASH`），通過後由 server 簽一張獨立 HMAC-signed httpOnly cookie（`stepup_reviewer` / `stepup_admin`，`Max-Age=3600`），與 Auth.js JWT 解耦、綁 userId 防 session fixation。姓名 onboarding 走新頁 `/onboarding/name`，由 Next.js 16 middleware 判斷 `User.displayNameSetAt` 是否為 null 決定重導。
 
@@ -138,18 +138,18 @@ main().catch((err) => {
 
 ```bash
 cd web
-pnpm dlx tsx scripts/hash-passwords.ts frc6998 980415
+pnpm dlx tsx scripts/hash-passwords.ts <已移除> <已移除>
 ```
 
 Expected: 印出兩行 `$argon2id$...` 格式的 hash。**把這兩個 hash 貼進 Vercel env** 作為 `REVIEWER_PASSWORD_HASH` 與 `ADMIN_PASSWORD_HASH`（production + preview + development）。本地 `web/.env.local` 也要加一份 for local dev。
 
 ```bash
 vercel env add REVIEWER_PASSWORD_HASH production
-# 貼 frc6998 的 hash
+# 貼 <已移除> 的 hash
 vercel env add REVIEWER_PASSWORD_HASH preview
 vercel env add REVIEWER_PASSWORD_HASH development
 vercel env add ADMIN_PASSWORD_HASH production
-# 貼 980415 的 hash
+# 貼 <已移除> 的 hash
 vercel env add ADMIN_PASSWORD_HASH preview
 vercel env add ADMIN_PASSWORD_HASH development
 vercel env pull .env.local
@@ -1515,7 +1515,7 @@ export default function ReviewLayout({ children }: { children: React.ReactNode }
 - [ ] **Step 3: 手動驗證**
 
 Run: `pnpm dev`
-登入為 `final_reviewer` → 訪 `/review` → 應彈密碼 modal → 輸入錯的 → 失敗訊息 → 輸入 `frc6998` → 看到 review 頁面。
+登入為 `final_reviewer` → 訪 `/review` → 應彈密碼 modal → 輸入錯的 → 失敗訊息 → 輸入 `<已移除>` → 看到 review 頁面。
 
 - [ ] **Step 4: Commit**
 
@@ -2248,7 +2248,7 @@ test('reviewer can enter /review after step-up', async ({ page, context }) => {
 
   await page.goto('/review');
   await expect(page.getByText('需要進一步驗證')).toBeVisible();
-  await page.getByLabel(/密碼|password/i).fill('frc6998');
+  await page.getByLabel(/密碼|password/i).fill('<已移除>');
   await page.getByRole('button', { name: /確認/i }).click();
   await expect(page.getByRole('heading', { name: /review/i })).toBeVisible();
 });
@@ -2311,7 +2311,7 @@ git commit -m "test(web): e2e onboarding name flow"
 
 ```bash
 cd web
-grep -r "frc6998\|980415" app/ lib/ components/ --exclude-dir=node_modules
+grep -r "<已移除>\|<已移除>" app/ lib/ components/ --exclude-dir=node_modules
 ```
 
 Expected: **零匹配**。

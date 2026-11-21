@@ -964,15 +964,15 @@ session 8 的 submit route 新邏輯「batch 已 under_review → image 跳過 a
 
 ### 發現 QQ：Vercel Blob `put()` 對非 ASCII pathname 自動 URL-encode
 
-**問題**：import 第二輪當 `globalExistingFilenames` Set 以 stem 查找時，中文 owner（如 `隊員A`）的 image 全部 skip miss，當作新的再傳一輪。ASCII-only owner（`Anna`）完全沒事。
+**問題**：import 第二輪當 `globalExistingFilenames` Set 以 stem 查找時，中文 owner（如 `隊員A`）的 image 全部 skip miss，當作新的再傳一輪。ASCII-only owner（英文名的隊友）完全沒事。
 
-**原因**：`put({ pathname: 'batches/xxx/隊員A__foo.jpg' })` 回傳的 url 是 `https://.../batches/xxx/%E5%90%B3%E8%A1%A3%E7%B5%9C__foo.jpg`。儲存到 `Image.blobPath` 就是 URL-encoded 版本。Import 從 DB 拉 blobPath、取 `path.basename()`、去副檔名得 stem，這個 stem 是 `%E5%90%B3%E8%A1%A3%E7%B5%9C__foo`；但 zip entry name 是原生 UTF-8 `隊員A__foo`，兩者永遠對不上 → 每次重跑都當新 image。
+**原因**：`put({ pathname: 'batches/xxx/隊員A__foo.jpg' })` 回傳的 url 是 `https://.../batches/xxx/%E9%9A%8A%E5%93%A1A__foo.jpg`。儲存到 `Image.blobPath` 就是 URL-encoded 版本。Import 從 DB 拉 blobPath、取 `path.basename()`、去副檔名得 stem，這個 stem 是 `%E9%9A%8A%E5%93%A1A__foo`；但 zip entry name 是原生 UTF-8 `隊員A__foo`，兩者永遠對不上 → 每次重跑都當新 image。
 
 **解決方案**：`decodeURIComponent(path.basename(blobPath))` 之後再取 stem。
 
 **選擇理由**：
 - Vercel Blob 的行為可視為合約（URL 必 escape），不能改；只能在比對時 decode
-- 易漏測：開發時跑 `Anna` 測通過 → production 跑中文 owner 才炸，需要在 test fixture 刻意放非 ASCII filename
+- 易漏測：開發時跑英文名的隊友測通過 → production 跑中文 owner 才炸，需要在 test fixture 刻意放非 ASCII filename
 - 另一種做法是「儲存時先 encode，比對時也 encode」— 可行但一樣要全 codebase 統一方向，不如 decode 在 import 端處理簡單
 
 ### 發現 RR：Neon pooled connection（pgbouncer + WebSocket）在長駐 INSERT script 下會斷線
@@ -1172,7 +1172,7 @@ if (e.repeat) return;
 
 **原因**：Neon 的 branch 機制是 copy-on-write，每個 branch 有獨立 endpoint hostname，但 password / database name / username 共用同一組 credentials。
 
-**解決方案**：在 `web/.env.local` 把 `DATABASE_URL` 的 host 部分從 prod endpoint (`ep-holy-moon-amdsve0e`) 換成 dev branch endpoint (`ep-cold-bar-amyk8qgq`)，其他 query string + password 不動：
+**解決方案**：在 `web/.env.local` 把 `DATABASE_URL` 的 host 部分從 prod endpoint (`<已移除>`) 換成 dev branch endpoint (`<已移除>`)，其他 query string + password 不動：
 ```
 postgresql://USER:PASSWORD@ep-xxxx.ap-southeast-1.aws.neon.tech/DBNAME?sslmode=require
                           ^^^^^^^^^^^^^^^^^^^^^^^
@@ -1277,7 +1277,7 @@ return NextResponse.json({ url: blob.url, filename, imageCount });
 
 ### 發現 BB:rclone "Shared with me" 的 `lsd` vs `copy` 結果不一致
 
-**問題**:Stage 1 前用 `rclone lsd gdrive:frc視覺辨識 --drive-shared-with-me` 列出 11 個擁有者資料夾,實際跑 `rclone copy` 完只有 7 個資料夾物化到本地 disk(Anna / 隊員F / 隊員H / 隊員D / 隊員C / 隊員I / 隊員J),少了 Phi / 隊員A / 隊員B / 段佑霖。
+**問題**:Stage 1 前用 `rclone lsd gdrive:frc視覺辨識 --drive-shared-with-me` 列出 11 個擁有者資料夾,實際跑 `rclone copy` 完只有 7 個資料夾物化到本地 disk(隊友 / 隊員F / 隊員H / 隊員D / 隊員C / 隊員I / 隊員J),少了隊友 / 隊員A / 隊員B / 隊友。
 
 **原因**(假設,未驗證):
 1. **最可能**:那 4 個資料夾在 Drive 上是空的。`rclone copy` 預設不建立空目錄(本地端)— 這是 rclone 設計選擇,不是 bug
@@ -1287,10 +1287,10 @@ return NextResponse.json({ url: blob.url, filename, imageCount });
 **解決方案**(下 session 排查):
 ```bash
 # 各別列檔,確認資料夾是不是真的空
-rclone lsf "gdrive:frc視覺辨識/Phi" --drive-shared-with-me
+rclone lsf "gdrive:frc視覺辨識/隊友" --drive-shared-with-me
 rclone lsf "gdrive:frc視覺辨識/隊員A" --drive-shared-with-me
 rclone lsf "gdrive:frc視覺辨識/隊員B" --drive-shared-with-me
-rclone lsf "gdrive:frc視覺辨識/段佑霖" --drive-shared-with-me
+rclone lsf "gdrive:frc視覺辨識/隊友" --drive-shared-with-me
 ```
 - 若回空 → 假設 1 成立,不必管(空資料夾沒素材)
 - 若回有檔但 copy 時 skip → 看 rclone log 抓 skip reason
@@ -1301,7 +1301,7 @@ rclone lsf "gdrive:frc視覺辨識/段佑霖" --drive-shared-with-me
 2. `rclone copy --create-empty-src-dirs` 是有 flag 但會塞一堆無意義空目錄
 3. 真正風險是「資料夾不空但沒下來」— 這要靠 lsf 排查源頭,不是 pipeline 補
 
-**遺留**:本 finding 是預防型,Stage 1 下來的 5.15 GiB 已足夠跑後面 stages。但若 user 後續說「為什麼 Phi 上的素材沒進 batch」,排查順序就照上面三個假設走
+**遺留**:本 finding 是預防型,Stage 1 下來的 5.15 GiB 已足夠跑後面 stages。但若 user 後續說「為什麼隊友上的素材沒進 batch」,排查順序就照上面三個假設走
 
 ---
 
@@ -1615,7 +1615,7 @@ useEffect(() => {
 vercel env pull --environment=production .env.vercel.production
 
 # 2. Run script with --env-file
-npx tsx --env-file=.env.vercel.production scripts/set-role.ts rosalyn@example.com admin
+npx tsx --env-file=.env.vercel.production scripts/set-role.ts <email> admin
 
 # 3. 刪除 .env.vercel.production（或留著 reuse）
 ```
@@ -1928,7 +1928,7 @@ setting matches the directory of your package.json file.
 ```bash
 # token from $APPDATA/com.vercel.cli/Data/auth.json  (Windows)
 #      or  ~/.local/share/com.vercel.cli/auth.json    (Linux/Mac)
-curl -X PATCH https://api.vercel.com/v9/projects/prj_UNhDUOxcLub8TeWzrclb3zrXyzXt \
+curl -X PATCH https://api.vercel.com/v9/projects/<已移除> \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"rootDirectory":"web"}'
@@ -2307,7 +2307,7 @@ z.iso.datetime()       // was z.string().datetime()
 
 ### 發現 EE：OpenCV `cv2.imwrite` / `cv2.imread` / `cv2.VideoCapture` 在 Windows 非 ASCII 路徑的行為嚴重不一致
 
-**問題**：Stage 2 抽幀跑完後，中文 owner 資料夾（隊員F / 隊員H / 隊員D / 隊員J）的 `processed/{owner}/images/` 是空的，但 `preprocess_state.json` 顯示「已處理 N 張」。ASCII 路徑（Anna）完全正常。
+**問題**：Stage 2 抽幀跑完後，中文 owner 資料夾（隊員F / 隊員H / 隊員D / 隊員J）的 `processed/{owner}/images/` 是空的，但 `preprocess_state.json` 顯示「已處理 N 張」。ASCII 路徑（英文名的隊友）完全正常。
 
 **原因**：OpenCV (opencv-python 4.x on Windows) 內部對不同 IO 路徑用不同實作：
 | 函式 | 路徑處理 | 非 ASCII 路徑行為 |
@@ -2344,7 +2344,7 @@ img = cv2.imdecode(data, cv2.IMREAD_COLOR)
 
 ### 發現 FF：Gemini API key 與 Google OAuth 2.0 access token 的辨識 — 字首 / 字元集 / 用途全不同
 
-**問題**：使用者看 Gemini API 文件看到「API key」字樣，手邊又有 Google SSO OAuth access token，誤把 `AQ.Ab8RN6KI...` 當成 API key export 給 `auto_pipeline.py`，每個 request 回 HTTP 400 `API_KEY_INVALID`。
+**問題**：使用者看 Gemini API 文件看到「API key」字樣，手邊又有 Google SSO OAuth access token，誤把 `AQ.<已移除>...` 當成 API key export 給 `auto_pipeline.py`，每個 request 回 HTTP 400 `API_KEY_INVALID`。
 
 **原因 / 辨識規則**：
 
